@@ -156,22 +156,102 @@ async function convertNode(root, settings) {
 }
 
 async function translateTexts(node, settings) {
-  if (node.type === 'TEXT') {
-    await makeTextRtl(node, settings);
+  const textNodes = [];
+  collectTextNodes(node, textNodes);
+
+  for (const textNode of textNodes) {
+    await loadTextFonts(textNode);
   }
 
+  let translations = {};
+  if (settings.translate) {
+    translations = await buildTranslationMap(textNodes, settings);
+  }
+
+  for (const textNode of textNodes) {
+    applyTextUpdate(textNode, translations);
+  }
+}
+
+function collectTextNodes(node, result) {
+  if (node.type === 'TEXT') {
+    result.push(node);
+    return;
+  }
   if ('children' in node) {
     for (const child of node.children) {
-      await translateTexts(child, settings);
+      collectTextNodes(child, result);
     }
   }
 }
 
-async function makeTextRtl(node, settings) {
-  await loadTextFonts(node);
+async function buildTranslationMap(textNodes, settings) {
+  const uniqueTexts = [];
+  const seen = {};
+  const translations = {};
+  for (const node of textNodes) {
+    const text = String(node.characters || '');
+    if (!normalizeTextForTranslation(text) || seen[text]) continue;
+    seen[text] = true;
 
-  if (settings.translate && containsChinese(node.characters)) {
-    node.characters = await translateText(node.characters, settings);
+    const localText = transformLocalText(text);
+    if (localText !== text) {
+      translations[text] = localText;
+      continue;
+    }
+
+    if (!containsChinese(text)) continue;
+    uniqueTexts.push(text);
+  }
+
+  if (!uniqueTexts.length) return translations;
+
+  if (normalizeProvider(settings.provider) === 'custom') {
+    const remoteTranslations = await translateTextBatch(uniqueTexts, settings);
+    return mergeTranslations(translations, remoteTranslations);
+  }
+
+  for (const text of uniqueTexts) {
+    translations[text] = await translateText(text, settings);
+  }
+  return translations;
+}
+
+function mergeTranslations(base, extra) {
+  for (const key in extra) {
+    base[key] = extra[key];
+  }
+  return base;
+}
+
+function normalizeTextForTranslation(value) {
+  return String(value || '').trim();
+}
+
+function transformLocalText(value) {
+  return transformChineseDateTime(value);
+}
+
+function transformChineseDateTime(value) {
+  return String(value || '').replace(
+    /(\d{4})[年\/.-](\d{1,2})[月\/.-](\d{1,2})日?\s+(\d{1,2})[:：\/](\d{1,2})(?:[:：\/](\d{1,2}))?/g,
+    function (_match, year, month, day, hour, minute, second) {
+      const date = pad2(day) + '/' + pad2(month) + '/' + year;
+      const time = pad2(hour) + '/' + pad2(minute) + '/' + pad2(second || '00');
+      return time + ' ' + date;
+    }
+  );
+}
+
+function pad2(value) {
+  const text = String(value);
+  return text.length === 1 ? '0' + text : text;
+}
+
+function applyTextUpdate(node, translations) {
+  const text = String(node.characters || '');
+  if (text && translations[text]) {
+    node.characters = translations[text];
   }
 
   if (node.textAlignHorizontal === 'LEFT') {
@@ -211,6 +291,84 @@ async function translateText(text, settings) {
     return text;
   }
   return await translateWithCustomEndpoint(text, settings);
+}
+
+async function translateTextBatch(texts, settings) {
+  const endpoint = (settings.endpoint || '').trim();
+  if (!endpoint) {
+    const fallback = {};
+    for (const text of texts) fallback[text] = text;
+    return fallback;
+  }
+
+  const headers = {
+    'Content-Type': 'application/json'
+  };
+  if (settings.apiKey) {
+    headers.Authorization = 'Bearer ' + settings.apiKey;
+  }
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify({
+      q: texts,
+      text: texts,
+      texts: texts,
+      source: 'zh',
+      source_lang: 'ZH',
+      target: 'ar',
+      target_lang: 'AR',
+      format: 'text',
+      api_key: settings.apiKey || undefined,
+      auth_key: settings.apiKey || undefined
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error('翻译接口返回 ' + response.status);
+  }
+
+  const data = await response.json();
+  return normalizeBatchTranslationResult(texts, data);
+}
+
+function normalizeBatchTranslationResult(texts, data) {
+  const result = {};
+  const values = extractTranslatedValues(data);
+  for (let i = 0; i < texts.length; i += 1) {
+    result[texts[i]] = values[i] || texts[i];
+  }
+  return result;
+}
+
+function extractTranslatedValues(data) {
+  if (Array.isArray(data)) {
+    return data.map(extractOneTranslatedValue);
+  }
+  if (Array.isArray(data.translations)) {
+    return data.translations.map(extractOneTranslatedValue);
+  }
+  if (Array.isArray(data.translatedText)) return data.translatedText;
+  if (Array.isArray(data.translation)) return data.translation;
+  if (Array.isArray(data.text)) return data.text;
+  if (Array.isArray(data.result)) return data.result;
+
+  const single = extractOneTranslatedValue(data);
+  return single ? [single] : [];
+}
+
+function extractOneTranslatedValue(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (value.translatedText) return value.translatedText;
+  if (value.translation) return value.translation;
+  if (value.text) return value.text;
+  if (value.result) return value.result;
+  if (value.translations && value.translations[0]) {
+    return extractOneTranslatedValue(value.translations[0]);
+  }
+  return '';
 }
 
 function normalizeProvider(value) {
