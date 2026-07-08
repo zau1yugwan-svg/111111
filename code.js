@@ -53,7 +53,7 @@ figma.ui.onmessage = async (message) => {
 
   const selection = getSelectedConvertibleSources();
   if (!selection.length) {
-    figma.notify('请先选中一个或多个画板 / Frame');
+    figma.notify('请先选中一个或多个画板 / 元素');
     figma.ui.postMessage({ type: 'done', ok: false });
     postSelectionState();
     return;
@@ -121,18 +121,11 @@ function getSelectedConvertibleSources() {
   const seen = {};
   for (const node of figma.currentPage.selection) {
     const source = getEditableSource(node);
-    if (!source || !isConvertibleSource(source) || seen[source.id]) continue;
+    if (!source || seen[source.id]) continue;
     seen[source.id] = true;
     result.push(source);
   }
   return result;
-}
-
-function isConvertibleSource(node) {
-  return node.type === 'FRAME'
-    || node.type === 'INSTANCE'
-    || node.type === 'COMPONENT'
-    || node.type === 'COMPONENT_SET';
 }
 
 async function readSetting(key) {
@@ -190,7 +183,18 @@ function canAppendTo(parent) {
 
 function getEditableSource(node) {
   const instance = findContainingInstance(node);
-  return instance || node;
+  return instance || findContainingTopLevelNode(node) || node;
+}
+
+function findContainingTopLevelNode(node) {
+  let current = node;
+  let topLevel = node;
+  while (current && current.parent && current.parent.type !== 'PAGE') {
+    if (current.parent.type === 'SECTION') break;
+    topLevel = current.parent;
+    current = current.parent;
+  }
+  return topLevel;
 }
 
 function findContainingInstance(node) {
@@ -306,6 +310,8 @@ async function buildTranslationMap(textNodes, settings) {
   const uniqueTexts = [];
   const seen = {};
   const translations = {};
+  const table = settings.translationTable || {};
+  const hasTable = !!settings.useTranslationTable && Object.keys(table).length > 0;
   for (const node of textNodes) {
     const text = String(node.characters || '');
     if (!normalizeTextForTranslation(text) || seen[text]) continue;
@@ -317,11 +323,26 @@ async function buildTranslationMap(textNodes, settings) {
       continue;
     }
 
+    const tableText = getTableTranslation(table, text);
+    if (tableText) {
+      translations[text] = tableText;
+      continue;
+    }
+
     if (!containsChinese(text)) continue;
+    if (hasTable && !settings.fallbackMissingWithMyMemory) continue;
     uniqueTexts.push(text);
   }
 
   if (!uniqueTexts.length) return translations;
+
+  if (hasTable && settings.fallbackMissingWithMyMemory) {
+    const remoteTranslations = {};
+    for (const text of uniqueTexts) {
+      remoteTranslations[text] = await translateWithMyMemory(text, settings);
+    }
+    return mergeTranslations(translations, remoteTranslations);
+  }
 
   if (normalizeProvider(settings.provider) === 'custom') {
     const remoteTranslations = await translateTextBatch(uniqueTexts, settings);
@@ -332,6 +353,13 @@ async function buildTranslationMap(textNodes, settings) {
     translations[text] = await translateText(text, settings);
   }
   return translations;
+}
+
+function getTableTranslation(table, text) {
+  if (!table) return '';
+  if (table[text]) return table[text];
+  const trimmed = String(text || '').trim();
+  return table[trimmed] || '';
 }
 
 function mergeTranslations(base, extra) {
@@ -351,11 +379,19 @@ function transformLocalText(value) {
 
 function transformChineseDateTime(value) {
   return String(value || '').replace(
-    /(\d{4})[年\/.-](\d{1,2})[月\/.-](\d{1,2})日?\s+(\d{1,2})[:：\/](\d{1,2})(?:[:：\/](\d{1,2}))?/g,
-    function (_match, year, month, day, hour, minute, second) {
+    /(\d{4})[年\/.-](\d{1,2})[月\/.-](\d{1,2})日?\s+(\d{1,2})([:：\/])(\d{1,2})(?:([:：\/])(\d{1,2}))?/g,
+    function (_match, year, month, day, hour, timeSep1, minute, timeSep2, second) {
       const date = pad2(day) + '/' + pad2(month) + '/' + year;
-      const time = pad2(hour) + '/' + pad2(minute) + '/' + pad2(second || '00');
+      let time = pad2(hour) + timeSep1 + pad2(minute);
+      if (second !== undefined) {
+        time += (timeSep2 || timeSep1) + pad2(second);
+      }
       return time + ' ' + date;
+    }
+  ).replace(
+    /(\d{4})[年\/.-](\d{1,2})[月\/.-](\d{1,2})日?/g,
+    function (_match, year, month, day) {
+      return pad2(day) + '/' + pad2(month) + '/' + year;
     }
   );
 }

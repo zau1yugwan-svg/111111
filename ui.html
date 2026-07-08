@@ -48,6 +48,12 @@
         outline: none;
       }
 
+      input[type="file"] {
+        width: 100%;
+        box-sizing: border-box;
+        color: var(--figma-color-text-secondary);
+      }
+
       input:focus {
         border-color: var(--figma-color-border-brand-strong);
       }
@@ -202,6 +208,12 @@
         margin-top: 14px;
       }
 
+      .table-summary {
+        margin-top: 8px;
+        color: var(--figma-color-text-secondary);
+        line-height: 1.5;
+      }
+
       ol {
         margin: 8px 0 0;
         padding-left: 18px;
@@ -225,15 +237,15 @@
   </head>
   <body>
     <h1>中文转阿语 RTL</h1>
-    <p>可多选画板后批量运行。插件会镜像布局位置，但不会把节点本身反向拉伸。</p>
+    <p>可选中画板或画板内任意元素后批量运行。插件会镜像布局位置，但不会把节点本身反向拉伸。</p>
 
     <div class="selection-panel">
       <div class="selection-head">
-        <span>当前选中的画板</span>
+        <span>当前选中的画板 / 元素</span>
         <span id="selectionCount" class="selection-count">0 个</span>
       </div>
       <div id="selectionList" class="selection-list">
-        <div class="selection-empty">还没有选中可转换画板</div>
+        <div class="selection-empty">还没有选中可转换画板或元素</div>
       </div>
     </div>
 
@@ -246,6 +258,33 @@
       <input id="translate" type="checkbox" checked>
       <span>把中文文本翻译成阿拉伯语</span>
     </label>
+
+    <details class="translation-settings">
+      <summary>翻译表</summary>
+
+      <label for="tableFile">导入本地表</label>
+      <input id="tableFile" type="file" accept=".csv,.tsv,.txt,.json">
+      <div class="hint">支持 CSV / TSV / JSON。第一行作为列名，例如：中文、English、العربية。</div>
+
+      <label for="tableUrl">网页表 URL（可选）</label>
+      <input id="tableUrl" type="text" placeholder="粘贴可公开访问的 CSV / JSON / HTML 表格地址">
+      <div class="config-actions">
+        <button class="secondary" id="loadTableUrl" type="button">读取网页表</button>
+        <button class="secondary" id="clearTable" type="button">清空表</button>
+      </div>
+
+      <label for="tableTarget">目标语言列</label>
+      <select id="tableTarget" disabled>
+        <option value="">未导入翻译表</option>
+      </select>
+
+      <label class="check">
+        <input id="fallbackMyMemory" type="checkbox">
+        <span>表里缺失时使用 MyMemory 翻译</span>
+      </label>
+
+      <div id="tableSummary" class="table-summary">未导入翻译表。</div>
+    </details>
 
     <details class="translation-settings">
       <summary>翻译服务设置</summary>
@@ -289,6 +328,13 @@
       const customEndpoint = document.getElementById('customEndpoint');
       const email = document.getElementById('email');
       const provider = document.getElementById('provider');
+      const tableFile = document.getElementById('tableFile');
+      const tableUrl = document.getElementById('tableUrl');
+      const loadTableUrl = document.getElementById('loadTableUrl');
+      const clearTable = document.getElementById('clearTable');
+      const tableTarget = document.getElementById('tableTarget');
+      const fallbackMyMemory = document.getElementById('fallbackMyMemory');
+      const tableSummary = document.getElementById('tableSummary');
       const createCopy = document.getElementById('createCopy');
       const translate = document.getElementById('translate');
       const mirrorRun = document.getElementById('mirrorRun');
@@ -305,6 +351,9 @@
       const selectionList = document.getElementById('selectionList');
       let selectedFrameCount = 0;
       let isConverting = false;
+      let translationRows = [];
+      let translationColumns = [];
+      let sourceColumn = '';
 
       parent.postMessage({ pluginMessage: { type: 'load-settings' } }, '*');
 
@@ -341,6 +390,9 @@
       };
 
       provider.onchange = syncFields;
+      tableFile.onchange = loadLocalTable;
+      loadTableUrl.onclick = loadRemoteTable;
+      clearTable.onclick = clearTranslationTable;
 
       function syncFields() {
         const value = provider.value;
@@ -351,12 +403,12 @@
       function renderSelection(items) {
         selectedFrameCount = items.length;
         selectionCount.textContent = items.length + ' 个';
-        mirrorRun.textContent = items.length > 1 ? '一键镜像 ' + items.length + ' 个' : '一键镜像';
-        translateRun.textContent = items.length > 1 ? '一键翻译 ' + items.length + ' 个' : '一键翻译';
+        mirrorRun.textContent = items.length > 1 ? '一键镜像 ' + items.length + ' 个对象' : '一键镜像';
+        translateRun.textContent = items.length > 1 ? '一键翻译 ' + items.length + ' 个对象' : '一键翻译';
         updateRunState();
 
         if (!items.length) {
-          selectionList.innerHTML = '<div class="selection-empty">还没有选中可转换画板</div>';
+          selectionList.innerHTML = '<div class="selection-empty">还没有选中可转换画板或元素</div>';
           return;
         }
 
@@ -418,13 +470,245 @@
 
       function collectTranslationSettings() {
         const selectedProvider = provider.value;
+        const tableData = buildTranslationTable();
         return {
           provider: selectedProvider,
           endpoint: selectedProvider === 'custom' ? customEndpoint.value : '',
           apiKey: '',
           region: '',
-          email: selectedProvider === 'mymemory' ? email.value : ''
+          email: selectedProvider === 'mymemory' ? email.value : '',
+          useTranslationTable: !!tableData,
+          translationTable: tableData || {},
+          fallbackMissingWithMyMemory: fallbackMyMemory.checked
         };
+      }
+
+      function buildTranslationTable() {
+        if (!translationRows.length || !sourceColumn || !tableTarget.value) return null;
+        const map = {};
+        for (const row of translationRows) {
+          const source = normalizeCell(row[sourceColumn]);
+          const target = normalizeCell(row[tableTarget.value]);
+          if (source && target) map[source] = target;
+        }
+        return Object.keys(map).length ? map : null;
+      }
+
+      function normalizeCell(value) {
+        return String(value === undefined || value === null ? '' : value).trim();
+      }
+
+      async function loadLocalTable() {
+        const file = tableFile.files && tableFile.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          applyTableRows(parseTableText(text, file.name));
+          status.textContent = '翻译表已导入';
+        } catch (error) {
+          status.textContent = '翻译表导入失败：' + error.message;
+        }
+      }
+
+      async function loadRemoteTable() {
+        const url = tableUrl.value.trim();
+        if (!url) {
+          status.textContent = '请先填写网页表 URL';
+          return;
+        }
+        loadTableUrl.disabled = true;
+        status.textContent = '正在读取网页表...';
+        try {
+          const response = await fetch(url);
+          if (!response.ok) throw new Error('网页返回 ' + response.status);
+          const text = await response.text();
+          applyTableRows(parseTableText(text, url));
+          status.textContent = '网页表已导入';
+        } catch (error) {
+          status.textContent = '读取网页表失败：可能被 Figma 网络白名单或网页跨域限制。' + error.message;
+        } finally {
+          loadTableUrl.disabled = false;
+        }
+      }
+
+      function parseTableText(text, name) {
+        const trimmed = String(text || '').trim();
+        if (!trimmed) throw new Error('表为空');
+        if (/\.json($|\?)/i.test(name) || trimmed[0] === '[' || trimmed[0] === '{') {
+          return parseJsonTable(trimmed);
+        }
+        if (/<table[\s>]/i.test(trimmed)) {
+          return parseHtmlTable(trimmed);
+        }
+        const delimiter = trimmed.indexOf('\t') >= 0 ? '\t' : ',';
+        return parseDelimitedTable(trimmed, delimiter);
+      }
+
+      function parseJsonTable(text) {
+        const data = JSON.parse(text);
+        if (Array.isArray(data)) return data.map(function (row) { return Object.assign({}, row); });
+        if (Array.isArray(data.rows)) return data.rows.map(function (row) { return Object.assign({}, row); });
+        if (data && typeof data === 'object') {
+          return Object.keys(data).map(function (key) {
+            const value = data[key];
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+              return Object.assign({ 中文: key }, value);
+            }
+            return { 中文: key, Translation: value };
+          });
+        }
+        throw new Error('JSON 需要是数组，或包含 rows 数组');
+      }
+
+      function parseHtmlTable(text) {
+        const doc = new DOMParser().parseFromString(text, 'text/html');
+        const table = doc.querySelector('table');
+        if (!table) throw new Error('没有找到 table');
+        const rows = Array.from(table.querySelectorAll('tr')).map(function (tr) {
+          return Array.from(tr.children).map(function (cell) {
+            return cell.textContent.trim();
+          });
+        }).filter(function (row) { return row.length; });
+        return rowsToObjects(rows);
+      }
+
+      function parseDelimitedTable(text, delimiter) {
+        return rowsToObjects(parseDelimitedRows(text, delimiter));
+      }
+
+      function parseDelimitedRows(text, delimiter) {
+        const rows = [];
+        let row = [];
+        let cell = '';
+        let quoted = false;
+        for (let i = 0; i < text.length; i += 1) {
+          const ch = text[i];
+          const next = text[i + 1];
+          if (ch === '"') {
+            if (quoted && next === '"') {
+              cell += '"';
+              i += 1;
+            } else {
+              quoted = !quoted;
+            }
+            continue;
+          }
+          if (!quoted && ch === delimiter) {
+            row.push(cell);
+            cell = '';
+            continue;
+          }
+          if (!quoted && (ch === '\n' || ch === '\r')) {
+            if (ch === '\r' && next === '\n') i += 1;
+            row.push(cell);
+            rows.push(row);
+            row = [];
+            cell = '';
+            continue;
+          }
+          cell += ch;
+        }
+        row.push(cell);
+        rows.push(row);
+        return rows.filter(function (items) {
+          return items.some(function (item) { return normalizeCell(item); });
+        });
+      }
+
+      function rowsToObjects(rows) {
+        if (!rows.length) throw new Error('表为空');
+        const headers = rows[0].map(function (header, index) {
+          return normalizeCell(header) || ('列 ' + (index + 1));
+        });
+        return rows.slice(1).map(function (items) {
+          const row = {};
+          for (let i = 0; i < headers.length; i += 1) row[headers[i]] = items[i] || '';
+          return row;
+        }).filter(function (row) {
+          return headers.some(function (header) { return normalizeCell(row[header]); });
+        });
+      }
+
+      function applyTableRows(rows) {
+        if (!rows.length) throw new Error('没有可用数据行');
+        translationRows = rows;
+        translationColumns = collectColumns(rows);
+        sourceColumn = detectSourceColumn(translationColumns, rows);
+        renderTableTarget();
+      }
+
+      function collectColumns(rows) {
+        const columns = [];
+        const seen = {};
+        for (const row of rows) {
+          for (const key in row) {
+            if (!seen[key]) {
+              seen[key] = true;
+              columns.push(key);
+            }
+          }
+        }
+        return columns;
+      }
+
+      function detectSourceColumn(columns, rows) {
+        const named = columns.find(function (column) {
+          return /中文|简体|zh|chinese|source|原文/i.test(column);
+        });
+        if (named) return named;
+        return columns.find(function (column) {
+          return rows.some(function (row) { return /[\u3400-\u9fff]/.test(normalizeCell(row[column])); });
+        }) || columns[0] || '';
+      }
+
+      function renderTableTarget() {
+        const targetColumns = translationColumns.filter(function (column) {
+          return column !== sourceColumn;
+        });
+        if (!targetColumns.length) {
+          tableTarget.innerHTML = '<option value="">没有识别到目标语言列</option>';
+          tableTarget.disabled = true;
+          updateTableSummary();
+          return;
+        }
+        tableTarget.disabled = false;
+        tableTarget.innerHTML = targetColumns.map(function (column) {
+          return '<option value="' + escapeHtml(column) + '">' + escapeHtml(column) + '</option>';
+        }).join('');
+        const preferred = pickPreferredTargetColumn(targetColumns);
+        if (preferred) tableTarget.value = preferred;
+        tableTarget.onchange = updateTableSummary;
+        updateTableSummary();
+      }
+
+      function pickPreferredTargetColumn(columns) {
+        return columns.find(function (column) {
+          return /阿拉伯|阿语|arabic|ar|العربية/i.test(column);
+        }) || columns[0] || '';
+      }
+
+      function updateTableSummary() {
+        const tableData = buildTranslationTable();
+        const count = tableData ? Object.keys(tableData).length : 0;
+        if (!translationRows.length) {
+          tableSummary.textContent = '未导入翻译表。';
+          return;
+        }
+        tableSummary.textContent = '已导入 ' + translationRows.length + ' 行；源语言列：'
+          + (sourceColumn || '未识别') + '；目标语言列：'
+          + (tableTarget.value || '未选择') + '；可匹配 ' + count + ' 条。';
+      }
+
+      function clearTranslationTable() {
+        translationRows = [];
+        translationColumns = [];
+        sourceColumn = '';
+        tableTarget.innerHTML = '<option value="">未导入翻译表</option>';
+        tableTarget.disabled = true;
+        tableFile.value = '';
+        tableUrl.value = '';
+        updateTableSummary();
+        status.textContent = '翻译表已清空';
       }
 
       mirrorRun.onclick = () => {
@@ -445,7 +729,10 @@
               endpoint: translationSettings.endpoint,
               apiKey: '',
               region: '',
-              email: selectedProvider === 'mymemory' ? translationSettings.email : ''
+              email: selectedProvider === 'mymemory' ? translationSettings.email : '',
+              useTranslationTable: translate.checked && translationSettings.useTranslationTable,
+              translationTable: translate.checked ? translationSettings.translationTable : {},
+              fallbackMissingWithMyMemory: translate.checked && translationSettings.fallbackMissingWithMyMemory
             }
           }
         }, '*');
@@ -456,6 +743,7 @@
         updateRunState();
         status.textContent = '正在翻译...';
         const selectedProvider = provider.value === 'none' ? 'mymemory' : provider.value;
+        const translationSettings = collectTranslationSettings();
         parent.postMessage({
           pluginMessage: {
             type: 'convert',
@@ -468,7 +756,10 @@
               endpoint: selectedProvider === 'custom' ? customEndpoint.value : '',
               apiKey: '',
               region: '',
-              email: selectedProvider === 'mymemory' ? email.value : ''
+              email: selectedProvider === 'mymemory' ? email.value : '',
+              useTranslationTable: translationSettings.useTranslationTable,
+              translationTable: translationSettings.translationTable,
+              fallbackMissingWithMyMemory: translationSettings.fallbackMissingWithMyMemory
             }
           }
         }, '*');
