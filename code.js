@@ -603,6 +603,7 @@ function mirrorContainer(node, isRoot) {
     swapConstraints(node);
   }
   swapDirectionalRadii(node);
+  swapDirectionalStrokes(node);
 }
 
 function replaceGroupWithFrame(group) {
@@ -800,6 +801,18 @@ function swapDirectionalRadii(node) {
   trySet(node, 'topRightRadius', topLeft);
   trySet(node, 'bottomLeftRadius', bottomRight);
   trySet(node, 'bottomRightRadius', bottomLeft);
+}
+
+function swapDirectionalStrokes(node) {
+  if (!('strokeLeftWeight' in node) || !('strokeRightWeight' in node)) return;
+
+  const left = safeGet(node, 'strokeLeftWeight');
+  const right = safeGet(node, 'strokeRightWeight');
+  if (left === undefined || right === undefined) return;
+  if (left === figma.mixed || right === figma.mixed) return;
+
+  trySet(node, 'strokeLeftWeight', right);
+  trySet(node, 'strokeRightWeight', left);
 }
 
 function trySet(node, key, value) {
