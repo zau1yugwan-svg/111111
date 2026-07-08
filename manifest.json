@@ -1,0 +1,16 @@
+{
+  "name": "中文转阿语 RTL",
+  "id": "zh-ar-rtl-converter",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": [
+      "https://api.mymemory.translated.net",
+      "https://libretranslate.com",
+      "https://translate.argosopentech.com"
+    ],
+    "reasoning": "Translation API requests for converting Chinese UI copy into Arabic."
+  }
+}

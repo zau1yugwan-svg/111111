@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      body {
+        margin: 0;
+        padding: 18px;
+        color: var(--figma-color-text);
+        background: var(--figma-color-bg);
+        font-size: 12px;
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      p {
+        margin: 0 0 16px;
+        color: var(--figma-color-text-secondary);
+        line-height: 1.6;
+      }
+
+      label {
+        display: block;
+        margin: 14px 0 6px;
+        font-weight: 600;
+      }
+
+      input[type="text"],
+      input[type="password"],
+      select {
+        width: 100%;
+        height: 34px;
+        box-sizing: border-box;
+        border: 1px solid var(--figma-color-border);
+        border-radius: 6px;
+        padding: 0 10px;
+        color: var(--figma-color-text);
+        background: var(--figma-color-bg-secondary);
+        outline: none;
+      }
+
+      input:focus {
+        border-color: var(--figma-color-border-brand-strong);
+      }
+
+      .check {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        margin: 12px 0;
+        color: var(--figma-color-text);
+        font-weight: 500;
+      }
+
+      .check input {
+        margin-top: 2px;
+      }
+
+      .hint {
+        margin-top: 6px;
+        color: var(--figma-color-text-tertiary);
+        line-height: 1.5;
+      }
+
+      .actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 18px;
+      }
+
+      .config-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      button {
+        height: 36px;
+        border: 0;
+        border-radius: 6px;
+        padding: 0 14px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .primary {
+        flex: 1;
+        color: var(--figma-color-text-onbrand);
+        background: var(--figma-color-bg-brand);
+      }
+
+      .secondary {
+        color: var(--figma-color-text);
+        background: var(--figma-color-bg-secondary);
+      }
+
+      .config-actions button {
+        flex: 1;
+      }
+
+      .status {
+        min-height: 18px;
+        margin-top: 12px;
+        color: var(--figma-color-text-secondary);
+      }
+
+      details {
+        margin-top: 12px;
+        border: 1px solid var(--figma-color-border);
+        border-radius: 6px;
+        padding: 10px;
+        background: var(--figma-color-bg-secondary);
+      }
+
+      summary {
+        cursor: pointer;
+        font-weight: 700;
+      }
+
+      ol {
+        margin: 8px 0 0;
+        padding-left: 18px;
+        color: var(--figma-color-text-secondary);
+        line-height: 1.55;
+      }
+
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+      }
+
+      .field {
+        display: none;
+      }
+
+      .field.show {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>中文转阿语 RTL</h1>
+    <p>选中画板后运行。插件会镜像布局位置，但不会把节点本身反向拉伸。</p>
+
+    <label class="check">
+      <input id="createCopy" type="checkbox" checked>
+      <span>生成副本，保留原中文画板</span>
+    </label>
+
+    <label class="check">
+      <input id="translate" type="checkbox" checked>
+      <span>把中文文本翻译成阿拉伯语</span>
+    </label>
+
+    <label for="provider">翻译服务</label>
+    <select id="provider">
+      <option value="mymemory">MyMemory 免注册免费翻译</option>
+      <option value="custom">自定义 JSON 接口</option>
+      <option value="none">不翻译，只做 RTL</option>
+    </select>
+
+    <div id="myMemoryFields" class="field">
+      <label for="email">Email（可选）</label>
+      <input id="email" type="text" placeholder="可不填；填写后可提高免费额度">
+      <div class="hint">不需要注册和 Key。公共免费接口有额度限制，适合轻量使用和测试。</div>
+      <div class="config-actions">
+        <button class="secondary" id="saveTranslation" type="button">保存翻译配置</button>
+        <button class="secondary" id="resetTranslation" type="button">重新填写</button>
+      </div>
+    </div>
+
+    <div id="customFields" class="field">
+      <label for="customEndpoint">自定义接口 URL</label>
+      <input id="customEndpoint" type="text" placeholder="例如：https://libretranslate.com/translate">
+      <div class="hint">接口需兼容 JSON POST。插件会读取 translatedText / translation / text / result。</div>
+      <div class="config-actions">
+        <button class="secondary" id="saveCustomTranslation" type="button">保存翻译配置</button>
+        <button class="secondary" id="resetCustomTranslation" type="button">重新填写</button>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="secondary" id="close">关闭</button>
+      <button class="primary" id="run">转换选中画板</button>
+    </div>
+    <div id="status" class="status"></div>
+
+    <script>
+      const customEndpoint = document.getElementById('customEndpoint');
+      const email = document.getElementById('email');
+      const provider = document.getElementById('provider');
+      const createCopy = document.getElementById('createCopy');
+      const translate = document.getElementById('translate');
+      const run = document.getElementById('run');
+      const close = document.getElementById('close');
+      const saveTranslation = document.getElementById('saveTranslation');
+      const resetTranslation = document.getElementById('resetTranslation');
+      const saveCustomTranslation = document.getElementById('saveCustomTranslation');
+      const resetCustomTranslation = document.getElementById('resetCustomTranslation');
+      const status = document.getElementById('status');
+      const myMemoryFields = document.getElementById('myMemoryFields');
+      const customFields = document.getElementById('customFields');
+
+      parent.postMessage({ pluginMessage: { type: 'load-settings' } }, '*');
+
+      onmessage = (event) => {
+        const message = event.data.pluginMessage || {};
+        if (message.type === 'settings') {
+          provider.value = normalizeProvider(message.settings.provider);
+          customEndpoint.value = message.settings.endpoint || '';
+          email.value = message.settings.email || '';
+          syncFields();
+        }
+        if (message.type === 'done') {
+          run.disabled = false;
+          status.textContent = message.ok ? '完成' : (message.error || '转换失败');
+        }
+        if (message.type === 'settings-saved') {
+          saveTranslation.disabled = false;
+          saveCustomTranslation.disabled = false;
+          status.textContent = message.ok ? '翻译配置已保存' : '保存失败';
+        }
+        if (message.type === 'settings-reset') {
+          resetTranslation.disabled = false;
+          resetCustomTranslation.disabled = false;
+          provider.value = 'mymemory';
+          customEndpoint.value = '';
+          email.value = '';
+          syncFields();
+          status.textContent = message.ok ? '已清空，请重新填写翻译配置' : '清空失败';
+        }
+      };
+
+      provider.onchange = syncFields;
+
+      function syncFields() {
+        const value = provider.value;
+        myMemoryFields.className = value === 'mymemory' ? 'field show' : 'field';
+        customFields.className = value === 'custom' ? 'field show' : 'field';
+      }
+
+      function normalizeProvider(value) {
+        if (value === 'custom' || value === 'none') return value;
+        return 'mymemory';
+      }
+
+      saveTranslation.onclick = saveTranslationSettings;
+      saveCustomTranslation.onclick = saveTranslationSettings;
+
+      function saveTranslationSettings() {
+        saveTranslation.disabled = true;
+        saveCustomTranslation.disabled = true;
+        status.textContent = '正在保存翻译配置...';
+        parent.postMessage({
+          pluginMessage: {
+            type: 'save-translation-settings',
+            settings: collectTranslationSettings()
+          }
+        }, '*');
+      }
+
+      resetTranslation.onclick = resetTranslationSettings;
+      resetCustomTranslation.onclick = resetTranslationSettings;
+
+      function resetTranslationSettings() {
+        resetTranslation.disabled = true;
+        resetCustomTranslation.disabled = true;
+        status.textContent = '正在清空翻译配置...';
+        parent.postMessage({
+          pluginMessage: {
+            type: 'reset-translation-settings'
+          }
+        }, '*');
+      }
+
+      function collectTranslationSettings() {
+        const selectedProvider = provider.value;
+        return {
+          provider: selectedProvider,
+          endpoint: selectedProvider === 'custom' ? customEndpoint.value : '',
+          apiKey: '',
+          region: '',
+          email: selectedProvider === 'mymemory' ? email.value : ''
+        };
+      }
+
+      run.onclick = () => {
+        run.disabled = true;
+        status.textContent = '正在转换...';
+        const selectedProvider = translate.checked ? provider.value : 'none';
+        const translationSettings = collectTranslationSettings();
+        parent.postMessage({
+          pluginMessage: {
+            type: 'convert',
+            settings: {
+              createCopy: createCopy.checked,
+              translate: translate.checked,
+              provider: selectedProvider,
+              endpoint: translationSettings.endpoint,
+              apiKey: '',
+              region: '',
+              email: selectedProvider === 'mymemory' ? translationSettings.email : ''
+            }
+          }
+        }, '*');
+      };
+
+      close.onclick = () => {
+        parent.postMessage({ pluginMessage: { type: 'close' } }, '*');
+      };
+    </script>
+  </body>
+</html>
