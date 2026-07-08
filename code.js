@@ -49,6 +49,7 @@ figma.ui.onmessage = async (message) => {
   if (message.type !== 'convert') return;
 
   const settings = message.settings || {};
+  const mode = settings.mode === 'translate-only' ? 'translate-only' : 'mirror';
 
   const selection = getSelectedConvertibleSources();
   if (!selection.length) {
@@ -68,7 +69,9 @@ figma.ui.onmessage = async (message) => {
     for (const source of selection) {
       let target = settings.createCopy ? cloneBeside(source, clonePlacement) : source;
       target = detachInstances(target);
-      if (settings.createCopy) target.name = source.name + ' - AR RTL';
+      if (settings.createCopy) {
+        target.name = source.name + (mode === 'translate-only' ? ' - AR' : ' - AR RTL');
+      }
 
       const result = await convertNode(target, settings);
       mergeConversionStats(stats, result);
@@ -226,7 +229,9 @@ function detachInstances(node) {
 
 async function convertNode(root, settings) {
   const stats = await translateTexts(root, settings);
-  mirrorContainer(root, true);
+  if (settings.mirror !== false) {
+    mirrorContainer(root, true);
+  }
   return stats;
 }
 
@@ -575,16 +580,19 @@ async function translateWithCustomEndpoint(text, settings) {
 
 function mirrorContainer(node, isRoot) {
   if (!('children' in node)) return;
+  if (node.type === 'GROUP') {
+    node = replaceGroupWithFrame(node);
+  }
+
   const vectorArtwork = isVectorArtworkContainer(node);
 
-  const children = node.children.slice();
+  let children = node.children.slice();
   if (!vectorArtwork) {
     for (const child of children) {
       mirrorContainer(child, false);
     }
+    children = node.children.slice();
   }
-
-  if (node.type === 'GROUP') return;
 
   mirrorAutoLayout(node, { preserveVectorLayerOrder: vectorArtwork });
   if ('width' in node && !vectorArtwork) {
@@ -595,6 +603,51 @@ function mirrorContainer(node, isRoot) {
     swapConstraints(node);
   }
   swapDirectionalRadii(node);
+}
+
+function replaceGroupWithFrame(group) {
+  const parent = group.parent;
+  if (!parent || !('insertChild' in parent)) return group;
+
+  const frame = figma.createFrame();
+  frame.name = group.name;
+  frame.x = group.x;
+  frame.y = group.y;
+  frame.resize(group.width, group.height);
+  frame.fills = [];
+  frame.strokes = [];
+  frame.clipsContent = false;
+  if ('opacity' in group) trySet(frame, 'opacity', group.opacity);
+  if ('visible' in group) trySet(frame, 'visible', group.visible);
+  if ('layoutPositioning' in group && 'layoutPositioning' in frame) {
+    trySet(frame, 'layoutPositioning', group.layoutPositioning);
+  }
+
+  const index = parent.children.indexOf(group);
+  parent.insertChild(index, frame);
+
+  const groupX = group.x || 0;
+  const groupY = group.y || 0;
+  for (const child of group.children.slice()) {
+    const childX = 'x' in child ? child.x : 0;
+    const childY = 'y' in child ? child.y : 0;
+    frame.appendChild(child);
+    if ('x' in child) trySet(child, 'x', childX - groupX);
+    if ('y' in child) trySet(child, 'y', childY - groupY);
+  }
+
+  safeRemove(group);
+  return frame;
+}
+
+function safeRemove(node) {
+  try {
+    if (node && !node.removed) {
+      node.remove();
+    }
+  } catch (error) {
+    // Moving every child out of a group can make Figma remove the empty group for us.
+  }
 }
 
 function isVectorArtworkContainer(node) {
@@ -657,22 +710,37 @@ function mirrorAutoLayout(node, options) {
 
 function mirrorChildrenPositions(parent, children) {
   const isAutoLayout = parent.layoutMode && parent.layoutMode !== 'NONE';
+  const parentWidth = safeGet(parent, 'width');
+  if (typeof parentWidth !== 'number') return;
 
   for (const child of children) {
-    if (!('x' in child) || !('width' in child)) continue;
-    if (isAutoLayout && child.layoutPositioning !== 'ABSOLUTE') continue;
+    if (!child || child.removed) continue;
+    const childX = safeGet(child, 'x');
+    const childWidth = safeGet(child, 'width');
+    if (typeof childX !== 'number' || typeof childWidth !== 'number') continue;
+    if (isAutoLayout && safeGet(child, 'layoutPositioning') !== 'ABSOLUTE') continue;
     if (isRotatedImageFillNode(child)) continue;
-    trySet(child, 'x', parent.width - child.x - child.width);
+    trySet(child, 'x', parentWidth - childX - childWidth);
     swapConstraints(child);
+  }
+}
+
+function safeGet(node, key) {
+  try {
+    return node[key];
+  } catch (error) {
+    return undefined;
   }
 }
 
 function isRotatedImageFillNode(node) {
   if (!('fills' in node) || !('rotation' in node)) return false;
-  if (Math.abs(node.rotation) < 0.01) return false;
-  if (node.fills === figma.mixed) return false;
+  const rotation = safeGet(node, 'rotation');
+  const fills = safeGet(node, 'fills');
+  if (typeof rotation !== 'number' || Math.abs(rotation) < 0.01) return false;
+  if (!fills || fills === figma.mixed) return false;
 
-  for (const paint of node.fills) {
+  for (const paint of fills) {
     if (paint.type === 'IMAGE') return true;
   }
   return false;
