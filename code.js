@@ -1,6 +1,9 @@
-figma.showUI(__html__, { width: 380, height: 640, themeColors: true });
+figma.showUI(__html__, { width: 380, height: 720, themeColors: true });
 
 const DEFAULT_GAP = 96;
+
+postSelectionState();
+figma.on('selectionchange', postSelectionState);
 
 figma.ui.onmessage = async (message) => {
   if (message.type === 'close') {
@@ -47,34 +50,87 @@ figma.ui.onmessage = async (message) => {
 
   const settings = message.settings || {};
 
-  const selection = figma.currentPage.selection;
+  const selection = getSelectedConvertibleSources();
   if (!selection.length) {
     figma.notify('请先选中一个或多个画板 / Frame');
     figma.ui.postMessage({ type: 'done', ok: false });
+    postSelectionState();
     return;
   }
 
   try {
     const converted = [];
-    for (const node of selection) {
-      const source = getEditableSource(node);
-      let target = settings.createCopy ? cloneBeside(source) : source;
+    const clonePlacement = settings.createCopy ? createClonePlacement(selection) : null;
+    const stats = {
+      skippedTextCount: 0,
+      skippedFonts: {}
+    };
+    for (const source of selection) {
+      let target = settings.createCopy ? cloneBeside(source, clonePlacement) : source;
       target = detachInstances(target);
       if (settings.createCopy) target.name = source.name + ' - AR RTL';
 
-      await convertNode(target, settings);
+      const result = await convertNode(target, settings);
+      mergeConversionStats(stats, result);
       converted.push(target);
     }
 
     figma.currentPage.selection = converted;
     figma.viewport.scrollAndZoomIntoView(converted);
-    figma.notify('已处理 ' + converted.length + ' 个对象');
-    figma.ui.postMessage({ type: 'done', ok: true });
+    const summary = buildDoneSummary(converted.length, stats);
+    figma.notify(summary);
+    figma.ui.postMessage({ type: 'done', ok: true, summary: summary });
+    postSelectionState();
   } catch (error) {
-    figma.notify('转换失败：' + error.message);
-    figma.ui.postMessage({ type: 'done', ok: false, error: error.message });
+    const detail = getErrorDetail(error);
+    figma.notify('转换失败：' + detail.message);
+    figma.ui.postMessage({ type: 'done', ok: false, error: detail.message, detail: detail.detail });
+    postSelectionState();
   }
 };
+
+function getErrorDetail(error) {
+  const message = error && error.message ? error.message : String(error || '未知错误');
+  const stack = error && error.stack ? String(error.stack) : '';
+  return {
+    message: message,
+    detail: stack ? stack.split('\n').slice(0, 6).join('\n') : message
+  };
+}
+
+function postSelectionState() {
+  const selected = getSelectedConvertibleSources();
+  figma.ui.postMessage({
+    type: 'selection',
+    count: selected.length,
+    items: selected.map(function (node) {
+      return {
+        id: node.id,
+        name: node.name || '(未命名画板)',
+        type: node.type
+      };
+    })
+  });
+}
+
+function getSelectedConvertibleSources() {
+  const result = [];
+  const seen = {};
+  for (const node of figma.currentPage.selection) {
+    const source = getEditableSource(node);
+    if (!source || !isConvertibleSource(source) || seen[source.id]) continue;
+    seen[source.id] = true;
+    result.push(source);
+  }
+  return result;
+}
+
+function isConvertibleSource(node) {
+  return node.type === 'FRAME'
+    || node.type === 'INSTANCE'
+    || node.type === 'COMPONENT'
+    || node.type === 'COMPONENT_SET';
+}
 
 async function readSetting(key) {
   try {
@@ -92,7 +148,22 @@ async function writeSetting(key, value) {
   }
 }
 
-function cloneBeside(node) {
+function createClonePlacement(nodes) {
+  if (!nodes.length) return { dx: 0 };
+  let minX = Infinity;
+  let maxX = -Infinity;
+
+  for (const node of nodes) {
+    if (!('x' in node) || !('width' in node)) continue;
+    minX = Math.min(minX, node.x);
+    maxX = Math.max(maxX, node.x + node.width);
+  }
+
+  if (minX === Infinity || maxX === -Infinity) return { dx: 0 };
+  return { dx: maxX - minX + DEFAULT_GAP };
+}
+
+function cloneBeside(node, placement) {
   const clone = node.clone();
 
   const parent = canAppendTo(node.parent) ? node.parent : figma.currentPage;
@@ -101,7 +172,10 @@ function cloneBeside(node) {
   }
 
   if ('x' in clone && 'width' in node) {
-    trySet(clone, 'x', node.x + node.width + DEFAULT_GAP);
+    const dx = placement && typeof placement.dx === 'number'
+      ? placement.dx
+      : node.width + DEFAULT_GAP;
+    trySet(clone, 'x', node.x + dx);
   }
   if ('y' in clone) trySet(clone, 'y', node.y);
   return clone;
@@ -151,26 +225,64 @@ function detachInstances(node) {
 }
 
 async function convertNode(root, settings) {
-  await translateTexts(root, settings);
+  const stats = await translateTexts(root, settings);
   mirrorContainer(root, true);
+  return stats;
 }
 
 async function translateTexts(node, settings) {
   const textNodes = [];
   collectTextNodes(node, textNodes);
+  const loadedTextNodes = [];
+  const stats = {
+    skippedTextCount: 0,
+    skippedFonts: {}
+  };
 
   for (const textNode of textNodes) {
-    await loadTextFonts(textNode);
+    const result = await tryLoadTextFonts(textNode);
+    if (result.ok) {
+      loadedTextNodes.push(textNode);
+    } else {
+      stats.skippedTextCount += 1;
+      if (result.fontKey) {
+        stats.skippedFonts[result.fontKey] = true;
+      }
+    }
   }
 
   let translations = {};
   if (settings.translate) {
-    translations = await buildTranslationMap(textNodes, settings);
+    translations = await buildTranslationMap(loadedTextNodes, settings);
   }
 
-  for (const textNode of textNodes) {
+  for (const textNode of loadedTextNodes) {
     applyTextUpdate(textNode, translations);
   }
+
+  return stats;
+}
+
+function mergeConversionStats(total, next) {
+  if (!next) return;
+  total.skippedTextCount += next.skippedTextCount || 0;
+  const fonts = next.skippedFonts || {};
+  for (const fontKey in fonts) {
+    total.skippedFonts[fontKey] = true;
+  }
+}
+
+function buildDoneSummary(count, stats) {
+  let summary = '已处理 ' + count + ' 个对象';
+  if (stats && stats.skippedTextCount) {
+    const fonts = Object.keys(stats.skippedFonts || {});
+    summary += '，有 ' + stats.skippedTextCount + ' 个文本因字体缺失未翻译';
+    if (fonts.length) {
+      summary += '：' + fonts.slice(0, 3).join('、');
+      if (fonts.length > 3) summary += ' 等';
+    }
+  }
+  return summary;
 }
 
 function collectTextNodes(node, result) {
@@ -276,6 +388,28 @@ async function loadTextFonts(node) {
   for (const font of fonts.values()) {
     await figma.loadFontAsync(font);
   }
+}
+
+async function tryLoadTextFonts(node) {
+  try {
+    await loadTextFonts(node);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      fontKey: getMissingFontKey(error, node)
+    };
+  }
+}
+
+function getMissingFontKey(error, node) {
+  const message = error && error.message ? String(error.message) : '';
+  const match = message.match(/The font \"([^\"]+)\" could not be loaded/);
+  if (match) return match[1];
+  if (node.fontName && node.fontName !== figma.mixed) {
+    return node.fontName.family + ' ' + node.fontName.style;
+  }
+  return '未知字体';
 }
 
 function containsChinese(value) {
@@ -441,17 +575,19 @@ async function translateWithCustomEndpoint(text, settings) {
 
 function mirrorContainer(node, isRoot) {
   if (!('children' in node)) return;
-  if (isVectorArtworkContainer(node)) return;
+  const vectorArtwork = isVectorArtworkContainer(node);
 
   const children = node.children.slice();
-  for (const child of children) {
-    mirrorContainer(child, false);
+  if (!vectorArtwork) {
+    for (const child of children) {
+      mirrorContainer(child, false);
+    }
   }
 
   if (node.type === 'GROUP') return;
 
-  mirrorAutoLayout(node);
-  if ('width' in node) {
+  mirrorAutoLayout(node, { preserveVectorLayerOrder: vectorArtwork });
+  if ('width' in node && !vectorArtwork) {
     mirrorChildrenPositions(node, children);
   }
 
@@ -499,13 +635,16 @@ function isVectorLeaf(node) {
     || node.type === 'ELLIPSE';
 }
 
-function mirrorAutoLayout(node) {
+function mirrorAutoLayout(node, options) {
   if (!('layoutMode' in node)) return;
   if (node.layoutMode === 'NONE') return;
 
+  const preserveVectorLayerOrder = options && options.preserveVectorLayerOrder;
   mirrorAutoLayoutHorizontalPadding(node);
   if (node.layoutMode === 'HORIZONTAL' && 'children' in node) {
-    reverseChildOrder(node);
+    if (!preserveVectorLayerOrder) {
+      reverseChildOrder(node);
+    }
     if ('primaryAxisAlignItems' in node) {
       trySet(node, 'primaryAxisAlignItems', swapAxisAlign(node.primaryAxisAlignItems));
     }

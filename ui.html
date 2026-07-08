@@ -111,6 +111,75 @@
         min-height: 18px;
         margin-top: 12px;
         color: var(--figma-color-text-secondary);
+        white-space: pre-wrap;
+      }
+
+      .selection-panel {
+        margin: 14px 0;
+        border: 1px solid var(--figma-color-border);
+        border-radius: 6px;
+        background: var(--figma-color-bg-secondary);
+        overflow: hidden;
+      }
+
+      .selection-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px;
+        border-bottom: 1px solid var(--figma-color-border);
+        font-weight: 700;
+      }
+
+      .selection-count {
+        flex: 0 0 auto;
+        color: var(--figma-color-text-secondary);
+        font-weight: 600;
+      }
+
+      .selection-list {
+        max-height: 118px;
+        overflow: auto;
+      }
+
+      .selection-empty,
+      .selection-item {
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--figma-color-border);
+      }
+
+      .selection-empty {
+        color: var(--figma-color-text-tertiary);
+      }
+
+      .selection-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .selection-item:last-child {
+        border-bottom: 0;
+      }
+
+      .selection-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 600;
+      }
+
+      .selection-type {
+        flex: 0 0 auto;
+        color: var(--figma-color-text-tertiary);
+        font-size: 11px;
+      }
+
+      button:disabled {
+        cursor: default;
+        opacity: 0.5;
       }
 
       details {
@@ -149,7 +218,17 @@
   </head>
   <body>
     <h1>中文转阿语 RTL</h1>
-    <p>选中画板后运行。插件会镜像布局位置，但不会把节点本身反向拉伸。</p>
+    <p>可多选画板后批量运行。插件会镜像布局位置，但不会把节点本身反向拉伸。</p>
+
+    <div class="selection-panel">
+      <div class="selection-head">
+        <span>当前选中的画板</span>
+        <span id="selectionCount" class="selection-count">0 个</span>
+      </div>
+      <div id="selectionList" class="selection-list">
+        <div class="selection-empty">还没有选中可转换画板</div>
+      </div>
+    </div>
 
     <label class="check">
       <input id="createCopy" type="checkbox" checked>
@@ -190,7 +269,7 @@
 
     <div class="actions">
       <button class="secondary" id="close">关闭</button>
-      <button class="primary" id="run">转换选中画板</button>
+      <button class="primary" id="run" disabled>转换选中画板</button>
     </div>
     <div id="status" class="status"></div>
 
@@ -209,6 +288,10 @@
       const status = document.getElementById('status');
       const myMemoryFields = document.getElementById('myMemoryFields');
       const customFields = document.getElementById('customFields');
+      const selectionCount = document.getElementById('selectionCount');
+      const selectionList = document.getElementById('selectionList');
+      let selectedFrameCount = 0;
+      let isConverting = false;
 
       parent.postMessage({ pluginMessage: { type: 'load-settings' } }, '*');
 
@@ -221,8 +304,12 @@
           syncFields();
         }
         if (message.type === 'done') {
-          run.disabled = false;
-          status.textContent = message.ok ? '完成' : (message.error || '转换失败');
+          isConverting = false;
+          updateRunState();
+          status.textContent = message.ok ? (message.summary || '完成') : ('转换失败：' + (message.detail || message.error || '未知错误'));
+        }
+        if (message.type === 'selection') {
+          renderSelection(message.items || []);
         }
         if (message.type === 'settings-saved') {
           saveTranslation.disabled = false;
@@ -246,6 +333,38 @@
         const value = provider.value;
         myMemoryFields.className = value === 'mymemory' ? 'field show' : 'field';
         customFields.className = value === 'custom' ? 'field show' : 'field';
+      }
+
+      function renderSelection(items) {
+        selectedFrameCount = items.length;
+        selectionCount.textContent = items.length + ' 个';
+        run.textContent = items.length > 1 ? '批量转换 ' + items.length + ' 个画板' : '转换选中画板';
+        updateRunState();
+
+        if (!items.length) {
+          selectionList.innerHTML = '<div class="selection-empty">还没有选中可转换画板</div>';
+          return;
+        }
+
+        selectionList.innerHTML = items.map(function (item) {
+          return '<div class="selection-item">'
+            + '<span class="selection-name" title="' + escapeHtml(item.name) + '">' + escapeHtml(item.name) + '</span>'
+            + '<span class="selection-type">' + escapeHtml(item.type) + '</span>'
+            + '</div>';
+        }).join('');
+      }
+
+      function updateRunState() {
+        run.disabled = isConverting || selectedFrameCount === 0;
+      }
+
+      function escapeHtml(value) {
+        return String(value || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
       }
 
       function normalizeProvider(value) {
@@ -294,7 +413,8 @@
       }
 
       run.onclick = () => {
-        run.disabled = true;
+        isConverting = true;
+        updateRunState();
         status.textContent = '正在转换...';
         const selectedProvider = translate.checked ? provider.value : 'none';
         const translationSettings = collectTranslationSettings();
