@@ -805,14 +805,21 @@ function swapDirectionalRadii(node) {
 
 function swapDirectionalStrokes(node) {
   if (!('strokeLeftWeight' in node) || !('strokeRightWeight' in node)) return;
+  if (!('strokeTopWeight' in node) || !('strokeBottomWeight' in node)) return;
 
+  const top = safeGet(node, 'strokeTopWeight');
   const left = safeGet(node, 'strokeLeftWeight');
   const right = safeGet(node, 'strokeRightWeight');
-  if (left === undefined || right === undefined) return;
-  if (left === figma.mixed || right === figma.mixed) return;
+  const bottom = safeGet(node, 'strokeBottomWeight');
+  const weights = [top, right, bottom, left];
+  for (const weight of weights) {
+    if (weight === undefined || weight === figma.mixed) return;
+  }
 
+  trySet(node, 'strokeTopWeight', top);
   trySet(node, 'strokeLeftWeight', right);
   trySet(node, 'strokeRightWeight', left);
+  trySet(node, 'strokeBottomWeight', bottom);
 }
 
 function trySet(node, key, value) {
