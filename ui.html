@@ -375,8 +375,8 @@
       <div class="settings-section">
         <div class="section-title">翻译表优先</div>
         <label for="tableFile">导入本地表</label>
-        <input id="tableFile" type="file" accept=".csv,.tsv,.txt,.json">
-        <div class="hint">支持 CSV / TSV / JSON，第一行作为列名。</div>
+        <input id="tableFile" type="file" accept=".csv,.tsv,.txt,.json,.xlsx,.xls">
+        <div class="hint">支持 CSV / TSV / JSON / XLSX，第一行作为列名；.xls 请另存为 .xlsx。</div>
 
         <details class="sub-settings">
           <summary>网页表</summary>
@@ -654,8 +654,10 @@
         const file = tableFile.files && tableFile.files[0];
         if (!file) return;
         try {
-          const text = await file.text();
-          applyTableRows(parseTableText(text, file.name));
+          const rows = /\.xlsx$/i.test(file.name)
+            ? await parseXlsxFile(file)
+            : parseTableText(await file.text(), file.name);
+          applyTableRows(rows);
           status.textContent = '翻译表已导入';
         } catch (error) {
           status.textContent = '翻译表导入失败：' + error.message;
@@ -726,6 +728,149 @@
 
       function parseDelimitedTable(text, delimiter) {
         return rowsToObjects(parseDelimitedRows(text, delimiter));
+      }
+
+      async function parseXlsxFile(file) {
+        if (/\.xls$/i.test(file.name)) {
+          throw new Error('暂不支持 .xls，请另存为 .xlsx 或 CSV UTF-8');
+        }
+        const files = await unzipXlsx(await file.arrayBuffer());
+        const workbookXml = textFromZip(files, 'xl/workbook.xml');
+        const relsXml = textFromZip(files, 'xl/_rels/workbook.xml.rels');
+        const sheetPath = getFirstWorksheetPath(workbookXml, relsXml);
+        const sheetXml = textFromZip(files, sheetPath);
+        const sharedStrings = parseSharedStrings(files);
+        return rowsToObjects(parseWorksheetRows(sheetXml, sharedStrings));
+      }
+
+      async function unzipXlsx(buffer) {
+        const view = new DataView(buffer);
+        const bytes = new Uint8Array(buffer);
+        const eocdOffset = findEndOfCentralDirectory(bytes);
+        if (eocdOffset < 0) throw new Error('不是有效的 .xlsx 文件');
+
+        const entryCount = view.getUint16(eocdOffset + 10, true);
+        const centralOffset = view.getUint32(eocdOffset + 16, true);
+        const result = {};
+        let offset = centralOffset;
+        for (let i = 0; i < entryCount; i += 1) {
+          if (view.getUint32(offset, true) !== 0x02014b50) throw new Error('Excel 压缩目录损坏');
+          const method = view.getUint16(offset + 10, true);
+          const compressedSize = view.getUint32(offset + 20, true);
+          const fileNameLength = view.getUint16(offset + 28, true);
+          const extraLength = view.getUint16(offset + 30, true);
+          const commentLength = view.getUint16(offset + 32, true);
+          const localOffset = view.getUint32(offset + 42, true);
+          const name = decodeUtf8(bytes.slice(offset + 46, offset + 46 + fileNameLength));
+          result[name] = await readZipEntry(buffer, localOffset, method, compressedSize);
+          offset += 46 + fileNameLength + extraLength + commentLength;
+        }
+        return result;
+      }
+
+      function findEndOfCentralDirectory(bytes) {
+        for (let i = bytes.length - 22; i >= 0 && i >= bytes.length - 65558; i -= 1) {
+          if (bytes[i] === 0x50 && bytes[i + 1] === 0x4b && bytes[i + 2] === 0x05 && bytes[i + 3] === 0x06) {
+            return i;
+          }
+        }
+        return -1;
+      }
+
+      async function readZipEntry(buffer, localOffset, method, compressedSize) {
+        const view = new DataView(buffer);
+        const bytes = new Uint8Array(buffer);
+        if (view.getUint32(localOffset, true) !== 0x04034b50) throw new Error('Excel 压缩内容损坏');
+        const fileNameLength = view.getUint16(localOffset + 26, true);
+        const extraLength = view.getUint16(localOffset + 28, true);
+        const dataStart = localOffset + 30 + fileNameLength + extraLength;
+        const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+        if (method === 0) return compressed;
+        if (method !== 8) throw new Error('Excel 使用了暂不支持的压缩方式');
+        if (!('DecompressionStream' in window)) throw new Error('当前 Figma 环境不支持解压 XLSX，请另存为 CSV');
+        const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+        return new Uint8Array(await new Response(stream).arrayBuffer());
+      }
+
+      function textFromZip(files, path) {
+        const bytes = files[path];
+        if (!bytes) throw new Error('Excel 缺少 ' + path);
+        return decodeUtf8(bytes);
+      }
+
+      function decodeUtf8(bytes) {
+        return new TextDecoder('utf-8').decode(bytes);
+      }
+
+      function getFirstWorksheetPath(workbookXml, relsXml) {
+        const workbook = parseXml(workbookXml);
+        const rels = parseXml(relsXml);
+        const firstSheet = workbook.querySelector('sheet');
+        if (!firstSheet) throw new Error('Excel 没有工作表');
+        const relId = firstSheet.getAttribute('r:id');
+        const rel = Array.from(rels.querySelectorAll('Relationship')).find(function (item) {
+          return item.getAttribute('Id') === relId;
+        });
+        if (!rel) throw new Error('Excel 工作表关系缺失');
+        const target = rel.getAttribute('Target') || '';
+        return target.indexOf('xl/') === 0 ? target : 'xl/' + target.replace(/^\//, '');
+      }
+
+      function parseSharedStrings(files) {
+        if (!files['xl/sharedStrings.xml']) return [];
+        const doc = parseXml(decodeUtf8(files['xl/sharedStrings.xml']));
+        return Array.from(doc.querySelectorAll('si')).map(function (item) {
+          return Array.from(item.querySelectorAll('t')).map(function (text) {
+            return text.textContent || '';
+          }).join('');
+        });
+      }
+
+      function parseWorksheetRows(sheetXml, sharedStrings) {
+        const doc = parseXml(sheetXml);
+        const rows = [];
+        Array.from(doc.querySelectorAll('sheetData row')).forEach(function (rowNode) {
+          const row = [];
+          Array.from(rowNode.querySelectorAll('c')).forEach(function (cell) {
+            const index = columnIndexFromRef(cell.getAttribute('r') || '');
+            row[index] = readCellValue(cell, sharedStrings);
+          });
+          rows.push(row.map(function (value) { return value || ''; }));
+        });
+        return rows.filter(function (row) {
+          return row.some(function (cell) { return normalizeCell(cell); });
+        });
+      }
+
+      function readCellValue(cell, sharedStrings) {
+        const type = cell.getAttribute('t');
+        if (type === 'inlineStr') {
+          return Array.from(cell.querySelectorAll('is t')).map(function (item) {
+            return item.textContent || '';
+          }).join('');
+        }
+        const value = cell.querySelector('v');
+        if (!value) return '';
+        const text = value.textContent || '';
+        if (type === 's') return sharedStrings[Number(text)] || '';
+        return text;
+      }
+
+      function columnIndexFromRef(ref) {
+        const letters = String(ref || '').match(/[A-Z]+/i);
+        if (!letters) return 0;
+        let index = 0;
+        const text = letters[0].toUpperCase();
+        for (let i = 0; i < text.length; i += 1) {
+          index = index * 26 + text.charCodeAt(i) - 64;
+        }
+        return index - 1;
+      }
+
+      function parseXml(text) {
+        const doc = new DOMParser().parseFromString(text, 'application/xml');
+        if (doc.querySelector('parsererror')) throw new Error('Excel XML 解析失败');
+        return doc;
       }
 
       function parseDelimitedRows(text, delimiter) {

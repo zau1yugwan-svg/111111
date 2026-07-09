@@ -269,7 +269,7 @@ async function translateTexts(node, settings) {
   }
 
   for (const textNode of loadedTextNodes) {
-    applyTextUpdate(textNode, translations);
+    applyTextUpdate(textNode, translations, settings);
   }
 
   return stats;
@@ -407,13 +407,13 @@ function pad2(value) {
   return text.length === 1 ? '0' + text : text;
 }
 
-function applyTextUpdate(node, translations) {
+function applyTextUpdate(node, translations, settings) {
   const text = String(node.characters || '');
   if (text && translations[text]) {
     node.characters = translations[text];
   }
 
-  if (node.textAlignHorizontal === 'LEFT') {
+  if (settings.mirror !== false && node.textAlignHorizontal === 'LEFT') {
     trySet(node, 'textAlignHorizontal', 'RIGHT');
   }
 }
