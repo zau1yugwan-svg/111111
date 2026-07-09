@@ -19,7 +19,8 @@ figma.ui.onmessage = async (message) => {
         endpoint: await readSetting('endpoint'),
         apiKey: await readSetting('apiKey'),
         region: await readSetting('region'),
-        email: await readSetting('email')
+        email: await readSetting('email'),
+        targetLanguage: normalizeTargetLanguage(await readSetting('targetLanguage'))
       }
     });
     return;
@@ -32,6 +33,7 @@ figma.ui.onmessage = async (message) => {
     await writeSetting('apiKey', settings.apiKey || '');
     await writeSetting('region', settings.region || '');
     await writeSetting('email', settings.email || '');
+    await writeSetting('targetLanguage', normalizeTargetLanguage(settings.targetLanguage));
     figma.ui.postMessage({ type: 'settings-saved', ok: true });
     return;
   }
@@ -42,6 +44,7 @@ figma.ui.onmessage = async (message) => {
     await writeSetting('apiKey', '');
     await writeSetting('region', '');
     await writeSetting('email', '');
+    await writeSetting('targetLanguage', 'ar');
     figma.ui.postMessage({ type: 'settings-reset', ok: true });
     return;
   }
@@ -311,6 +314,9 @@ async function buildTranslationMap(textNodes, settings) {
   const seen = {};
   const translations = {};
   const table = settings.translationTable || {};
+  if (settings.tableImported && settings.tableTargetMissing) {
+    return translations;
+  }
   const hasTable = !!settings.useTranslationTable && Object.keys(table).length > 0;
   for (const node of textNodes) {
     const text = String(node.characters || '');
@@ -476,6 +482,7 @@ async function translateTextBatch(texts, settings) {
     return fallback;
   }
 
+  const targetLanguage = normalizeTargetLanguage(settings.targetLanguage);
   const headers = {
     'Content-Type': 'application/json'
   };
@@ -492,8 +499,8 @@ async function translateTextBatch(texts, settings) {
       texts: texts,
       source: 'zh',
       source_lang: 'ZH',
-      target: 'ar',
-      target_lang: 'AR',
+      target: targetLanguage,
+      target_lang: targetLanguage.toUpperCase(),
       format: 'text',
       api_key: settings.apiKey || undefined,
       auth_key: settings.apiKey || undefined
@@ -551,12 +558,17 @@ function normalizeProvider(value) {
   return 'mymemory';
 }
 
+function normalizeTargetLanguage(value) {
+  return String(value || 'ar').trim() || 'ar';
+}
+
 async function translateWithMyMemory(text, settings) {
   const email = (settings.email || '').trim();
+  const targetLanguage = normalizeTargetLanguage(settings.targetLanguage);
   let url = 'https://api.mymemory.translated.net/get?q='
     + encodeURIComponent(text)
     + '&langpair='
-    + encodeURIComponent('zh-CN|ar');
+    + encodeURIComponent('zh-CN|' + targetLanguage);
   if (email) {
     url += '&de=' + encodeURIComponent(email);
   }
@@ -580,6 +592,7 @@ async function translateWithCustomEndpoint(text, settings) {
   const endpoint = (settings.endpoint || '').trim();
   if (!endpoint) return text;
 
+  const targetLanguage = normalizeTargetLanguage(settings.targetLanguage);
   const headers = {
     'Content-Type': 'application/json'
   };
@@ -595,8 +608,8 @@ async function translateWithCustomEndpoint(text, settings) {
       text,
       source: 'zh',
       source_lang: 'ZH',
-      target: 'ar',
-      target_lang: 'AR',
+      target: targetLanguage,
+      target_lang: targetLanguage.toUpperCase(),
       format: 'text',
       api_key: settings.apiKey || undefined,
       auth_key: settings.apiKey || undefined

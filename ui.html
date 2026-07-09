@@ -87,12 +87,6 @@
         flex: 1;
       }
 
-      .config-actions {
-        display: flex;
-        gap: 8px;
-        margin-top: 12px;
-      }
-
       button {
         height: 36px;
         border: 0;
@@ -110,10 +104,7 @@
       .secondary {
         color: var(--figma-color-text);
         background: var(--figma-color-bg-secondary);
-      }
-
-      .config-actions button {
-        flex: 1;
+        border: 1px solid var(--figma-color-border);
       }
 
       .status {
@@ -208,10 +199,79 @@
         margin-top: 14px;
       }
 
+      .settings-section {
+        margin-top: 12px;
+        padding: 12px;
+        border: 1px solid var(--figma-color-border);
+        border-radius: 6px;
+        background: var(--figma-color-bg);
+      }
+
+      .settings-section:first-of-type {
+        margin-top: 10px;
+      }
+
+      .section-title {
+        margin: 0 0 10px;
+        font-weight: 800;
+      }
+
+      .inline-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .inline-actions button {
+        width: 100%;
+        background: var(--figma-color-bg-secondary);
+        border: 1px solid var(--figma-color-border);
+      }
+
+      .sub-settings {
+        margin-top: 10px;
+        border: 0;
+        padding: 0;
+        background: transparent;
+      }
+
+      .sub-settings summary {
+        color: var(--figma-color-text-secondary);
+        font-weight: 700;
+      }
+
       .table-summary {
         margin-top: 8px;
         color: var(--figma-color-text-secondary);
         line-height: 1.5;
+      }
+
+      .language-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .language-pill {
+        max-width: 100%;
+        box-sizing: border-box;
+        padding: 4px 8px;
+        border: 1px solid var(--figma-color-border);
+        border-radius: 999px;
+        color: var(--figma-color-text);
+        background: var(--figma-color-bg-secondary);
+        font-size: 11px;
+        font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .language-pill.muted {
+        color: var(--figma-color-text-tertiary);
+        font-weight: 600;
       }
 
       ol {
@@ -256,63 +316,114 @@
 
     <label class="check">
       <input id="translate" type="checkbox" checked>
-      <span>把中文文本翻译成阿拉伯语</span>
+      <span>把中文文本翻译成目标语言</span>
     </label>
 
+    <label for="targetLanguage">目标语言</label>
+    <select id="targetLanguage">
+      <option value="ar">阿拉伯语 Arabic</option>
+      <option value="en">英语 English</option>
+      <option value="pt">葡萄牙语 Portuguese</option>
+      <option value="es">西班牙语 Spanish</option>
+      <option value="my">缅甸语 Burmese</option>
+      <option value="ja">日语 Japanese</option>
+      <option value="ko">韩语 Korean</option>
+      <option value="fr">法语 French</option>
+      <option value="de">德语 German</option>
+      <option value="it">意大利语 Italian</option>
+      <option value="ru">俄语 Russian</option>
+      <option value="tr">土耳其语 Turkish</option>
+      <option value="th">泰语 Thai</option>
+      <option value="vi">越南语 Vietnamese</option>
+      <option value="id">印尼语 Indonesian</option>
+      <option value="ms">马来语 Malay</option>
+      <option value="hi">印地语 Hindi</option>
+      <option value="bn">孟加拉语 Bengali</option>
+      <option value="ur">乌尔都语 Urdu</option>
+      <option value="fa">波斯语 Persian</option>
+      <option value="he">希伯来语 Hebrew</option>
+      <option value="nl">荷兰语 Dutch</option>
+      <option value="pl">波兰语 Polish</option>
+      <option value="uk">乌克兰语 Ukrainian</option>
+      <option value="ro">罗马尼亚语 Romanian</option>
+      <option value="cs">捷克语 Czech</option>
+      <option value="el">希腊语 Greek</option>
+      <option value="sv">瑞典语 Swedish</option>
+      <option value="da">丹麦语 Danish</option>
+      <option value="fi">芬兰语 Finnish</option>
+      <option value="no">挪威语 Norwegian</option>
+      <option value="hu">匈牙利语 Hungarian</option>
+      <option value="bg">保加利亚语 Bulgarian</option>
+      <option value="hr">克罗地亚语 Croatian</option>
+      <option value="sk">斯洛伐克语 Slovak</option>
+      <option value="sl">斯洛文尼亚语 Slovenian</option>
+      <option value="lt">立陶宛语 Lithuanian</option>
+      <option value="lv">拉脱维亚语 Latvian</option>
+      <option value="et">爱沙尼亚语 Estonian</option>
+      <option value="sw">斯瓦希里语 Swahili</option>
+      <option value="tl">菲律宾语 Filipino</option>
+      <option value="custom">自定义语言代码</option>
+    </select>
+    <div id="customLanguageField" class="field">
+      <label for="customTargetLanguage">自定义目标语言代码</label>
+      <input id="customTargetLanguage" type="text" placeholder="例如：km、lo、ta、te">
+    </div>
+
     <details class="translation-settings">
-      <summary>翻译表</summary>
+      <summary>翻译设置</summary>
 
-      <label for="tableFile">导入本地表</label>
-      <input id="tableFile" type="file" accept=".csv,.tsv,.txt,.json">
-      <div class="hint">支持 CSV / TSV / JSON。第一行作为列名，例如：中文、English、العربية。</div>
+      <div class="settings-section">
+        <div class="section-title">翻译表优先</div>
+        <label for="tableFile">导入本地表</label>
+        <input id="tableFile" type="file" accept=".csv,.tsv,.txt,.json">
+        <div class="hint">支持 CSV / TSV / JSON，第一行作为列名。</div>
 
-      <label for="tableUrl">网页表 URL（可选）</label>
-      <input id="tableUrl" type="text" placeholder="粘贴可公开访问的 CSV / JSON / HTML 表格地址">
-      <div class="config-actions">
-        <button class="secondary" id="loadTableUrl" type="button">读取网页表</button>
-        <button class="secondary" id="clearTable" type="button">清空表</button>
+        <details class="sub-settings">
+          <summary>网页表</summary>
+          <label for="tableUrl">网页表 URL</label>
+          <input id="tableUrl" type="text" placeholder="公开 CSV / JSON / HTML 表格地址">
+          <div class="inline-actions">
+            <button class="secondary" id="loadTableUrl" type="button">读取网页表</button>
+            <button class="secondary" id="clearTable" type="button">清空表</button>
+          </div>
+        </details>
+
+        <label class="check">
+          <input id="fallbackMyMemory" type="checkbox">
+          <span>表里缺失时使用翻译服务</span>
+        </label>
+
+        <div id="tableLanguages" class="language-list"></div>
+        <div id="tableSummary" class="table-summary">未导入翻译表。</div>
       </div>
 
-      <label for="tableTarget">目标语言列</label>
-      <select id="tableTarget" disabled>
-        <option value="">未导入翻译表</option>
-      </select>
+      <div class="settings-section">
+        <div class="section-title">缺失文本兜底</div>
+        <label for="provider">翻译服务</label>
+        <select id="provider">
+          <option value="mymemory">MyMemory 免注册免费翻译</option>
+          <option value="custom">自定义 JSON 接口</option>
+          <option value="none">不翻译，只做 RTL</option>
+        </select>
 
-      <label class="check">
-        <input id="fallbackMyMemory" type="checkbox">
-        <span>表里缺失时使用 MyMemory 翻译</span>
-      </label>
-
-      <div id="tableSummary" class="table-summary">未导入翻译表。</div>
-    </details>
-
-    <details class="translation-settings">
-      <summary>翻译服务设置</summary>
-
-      <label for="provider">翻译服务</label>
-      <select id="provider">
-        <option value="mymemory">MyMemory 免注册免费翻译</option>
-        <option value="custom">自定义 JSON 接口</option>
-        <option value="none">不翻译，只做 RTL</option>
-      </select>
-
-      <div id="myMemoryFields" class="field">
-        <label for="email">Email（可选）</label>
-        <input id="email" type="text" placeholder="可不填；填写后可提高免费额度">
-        <div class="hint">不需要注册和 Key。公共免费接口有额度限制，适合轻量使用和测试。</div>
-        <div class="config-actions">
-          <button class="secondary" id="saveTranslation" type="button">保存翻译配置</button>
-          <button class="secondary" id="resetTranslation" type="button">重新填写</button>
+        <div id="myMemoryFields" class="field">
+          <label for="email">Email（可选）</label>
+          <input id="email" type="text" placeholder="可不填；填写后可提高免费额度">
+          <div class="hint">不需要注册和 Key。公共免费接口有额度限制。</div>
+          <div class="inline-actions">
+            <button class="secondary" id="saveTranslation" type="button">保存配置</button>
+            <button class="secondary" id="resetTranslation" type="button">重新填写</button>
+          </div>
         </div>
-      </div>
 
-      <div id="customFields" class="field">
-        <label for="customEndpoint">自定义接口 URL</label>
-        <input id="customEndpoint" type="text" placeholder="例如：https://libretranslate.com/translate">
-        <div class="hint">接口需兼容 JSON POST。插件会读取 translatedText / translation / text / result。</div>
-        <div class="config-actions">
-          <button class="secondary" id="saveCustomTranslation" type="button">保存翻译配置</button>
-          <button class="secondary" id="resetCustomTranslation" type="button">重新填写</button>
+        <div id="customFields" class="field">
+          <label for="customEndpoint">自定义接口 URL</label>
+          <input id="customEndpoint" type="text" placeholder="例如：https://libretranslate.com/translate">
+          <div class="hint">接口需兼容 JSON POST。</div>
+          <div class="inline-actions">
+            <button class="secondary" id="saveCustomTranslation" type="button">保存配置</button>
+            <button class="secondary" id="resetCustomTranslation" type="button">重新填写</button>
+          </div>
         </div>
       </div>
     </details>
@@ -328,12 +439,15 @@
       const customEndpoint = document.getElementById('customEndpoint');
       const email = document.getElementById('email');
       const provider = document.getElementById('provider');
+      const targetLanguage = document.getElementById('targetLanguage');
+      const customTargetLanguage = document.getElementById('customTargetLanguage');
+      const customLanguageField = document.getElementById('customLanguageField');
       const tableFile = document.getElementById('tableFile');
       const tableUrl = document.getElementById('tableUrl');
       const loadTableUrl = document.getElementById('loadTableUrl');
       const clearTable = document.getElementById('clearTable');
-      const tableTarget = document.getElementById('tableTarget');
       const fallbackMyMemory = document.getElementById('fallbackMyMemory');
+      const tableLanguages = document.getElementById('tableLanguages');
       const tableSummary = document.getElementById('tableSummary');
       const createCopy = document.getElementById('createCopy');
       const translate = document.getElementById('translate');
@@ -363,6 +477,7 @@
           provider.value = normalizeProvider(message.settings.provider);
           customEndpoint.value = message.settings.endpoint || '';
           email.value = message.settings.email || '';
+          setTargetLanguage(message.settings.targetLanguage);
           syncFields();
         }
         if (message.type === 'done') {
@@ -384,12 +499,18 @@
           provider.value = 'mymemory';
           customEndpoint.value = '';
           email.value = '';
+          targetLanguage.value = 'ar';
+          customTargetLanguage.value = '';
           syncFields();
           status.textContent = message.ok ? '已清空，请重新填写翻译配置' : '清空失败';
         }
       };
 
       provider.onchange = syncFields;
+      targetLanguage.onchange = function () {
+        syncFields();
+        updateTableSummary();
+      };
       tableFile.onchange = loadLocalTable;
       loadTableUrl.onclick = loadRemoteTable;
       clearTable.onclick = clearTranslationTable;
@@ -398,6 +519,7 @@
         const value = provider.value;
         myMemoryFields.className = value === 'mymemory' ? 'field show' : 'field';
         customFields.className = value === 'custom' ? 'field show' : 'field';
+        customLanguageField.className = targetLanguage.value === 'custom' ? 'field show' : 'field';
       }
 
       function renderSelection(items) {
@@ -439,6 +561,31 @@
         return 'mymemory';
       }
 
+      function normalizeTargetLanguage(value) {
+        return value || 'ar';
+      }
+
+      function getTargetLanguageCode() {
+        if (targetLanguage.value === 'custom') {
+          return customTargetLanguage.value.trim() || 'ar';
+        }
+        return targetLanguage.value || 'ar';
+      }
+
+      function setTargetLanguage(value) {
+        const code = normalizeTargetLanguage(value);
+        const option = Array.from(targetLanguage.options).find(function (item) {
+          return item.value === code;
+        });
+        if (option) {
+          targetLanguage.value = code;
+          customTargetLanguage.value = '';
+        } else {
+          targetLanguage.value = 'custom';
+          customTargetLanguage.value = code;
+        }
+      }
+
       saveTranslation.onclick = saveTranslationSettings;
       saveCustomTranslation.onclick = saveTranslationSettings;
 
@@ -471,12 +618,16 @@
       function collectTranslationSettings() {
         const selectedProvider = provider.value;
         const tableData = buildTranslationTable();
+        const targetColumn = getTableTargetColumn();
         return {
           provider: selectedProvider,
           endpoint: selectedProvider === 'custom' ? customEndpoint.value : '',
           apiKey: '',
           region: '',
           email: selectedProvider === 'mymemory' ? email.value : '',
+          targetLanguage: getTargetLanguageCode(),
+          tableImported: translationRows.length > 0,
+          tableTargetMissing: translationRows.length > 0 && !targetColumn,
           useTranslationTable: !!tableData,
           translationTable: tableData || {},
           fallbackMissingWithMyMemory: fallbackMyMemory.checked
@@ -484,11 +635,12 @@
       }
 
       function buildTranslationTable() {
-        if (!translationRows.length || !sourceColumn || !tableTarget.value) return null;
+        const targetColumn = getTableTargetColumn();
+        if (!translationRows.length || !sourceColumn || !targetColumn) return null;
         const map = {};
         for (const row of translationRows) {
           const source = normalizeCell(row[sourceColumn]);
-          const target = normalizeCell(row[tableTarget.value]);
+          const target = normalizeCell(row[targetColumn]);
           if (source && target) map[source] = target;
         }
         return Object.keys(map).length ? map : null;
@@ -662,49 +814,129 @@
       }
 
       function renderTableTarget() {
-        const targetColumns = translationColumns.filter(function (column) {
-          return column !== sourceColumn;
-        });
-        if (!targetColumns.length) {
-          tableTarget.innerHTML = '<option value="">没有识别到目标语言列</option>';
-          tableTarget.disabled = true;
-          updateTableSummary();
-          return;
-        }
-        tableTarget.disabled = false;
-        tableTarget.innerHTML = targetColumns.map(function (column) {
-          return '<option value="' + escapeHtml(column) + '">' + escapeHtml(column) + '</option>';
-        }).join('');
-        const preferred = pickPreferredTargetColumn(targetColumns);
-        if (preferred) tableTarget.value = preferred;
-        tableTarget.onchange = updateTableSummary;
         updateTableSummary();
       }
 
-      function pickPreferredTargetColumn(columns) {
-        return columns.find(function (column) {
-          return /阿拉伯|阿语|arabic|ar|العربية/i.test(column);
-        }) || columns[0] || '';
+      function getTableTargetColumn() {
+        const targetCode = getTargetLanguageCode();
+        return translationColumns.find(function (column) {
+          return column !== sourceColumn && detectLanguageCodeFromColumn(column) === targetCode;
+        }) || '';
+      }
+
+      function detectLanguageCodeFromColumn(column) {
+        const value = String(column || '').trim().toLowerCase();
+        const checks = [
+          [/阿拉伯|阿语|arabic|العربية|^ar$/, 'ar'],
+          [/英语|英文|english|^en$/, 'en'],
+          [/葡萄牙|portuguese|português|^pt$/, 'pt'],
+          [/西班牙|spanish|español|^es$/, 'es'],
+          [/缅甸|burmese|myanmar|^my$/, 'my'],
+          [/日语|日文|japanese|日本語|^ja$/, 'ja'],
+          [/韩语|韩文|korean|한국어|^ko$/, 'ko'],
+          [/法语|法文|french|français|^fr$/, 'fr'],
+          [/德语|德文|german|deutsch|^de$/, 'de'],
+          [/意大利|italian|italiano|^it$/, 'it'],
+          [/俄语|俄文|russian|русский|^ru$/, 'ru'],
+          [/泰语|thai|ไทย|^th$/, 'th'],
+          [/越南|vietnamese|tiếng việt|^vi$/, 'vi'],
+          [/印尼|indonesian|bahasa indonesia|^id$/, 'id'],
+          [/马来|malay|bahasa melayu|^ms$/, 'ms'],
+          [/印地|hindi|हिन्दी|^hi$/, 'hi'],
+          [/土耳其|turkish|türkçe|^tr$/, 'tr']
+        ];
+        for (const item of checks) {
+          if (item[0].test(value)) return item[1];
+        }
+        return '';
       }
 
       function updateTableSummary() {
+        renderTableLanguages();
         const tableData = buildTranslationTable();
         const count = tableData ? Object.keys(tableData).length : 0;
         if (!translationRows.length) {
           tableSummary.textContent = '未导入翻译表。';
           return;
         }
+        const targetColumn = getTableTargetColumn();
+        if (!targetColumn) {
+          tableSummary.textContent = '已导入 ' + translationRows.length + ' 行；源语言列：'
+            + (sourceColumn || '未识别') + '；未识别到当前目标语言对应的翻译表列。';
+          return;
+        }
         tableSummary.textContent = '已导入 ' + translationRows.length + ' 行；源语言列：'
           + (sourceColumn || '未识别') + '；目标语言列：'
-          + (tableTarget.value || '未选择') + '；可匹配 ' + count + ' 条。';
+          + targetColumn + '；可匹配 ' + count + ' 条。';
+      }
+
+      function renderTableLanguages() {
+        if (!translationColumns.length) {
+          tableLanguages.innerHTML = '';
+          return;
+        }
+        tableLanguages.innerHTML = translationColumns.map(function (column) {
+          const code = column === sourceColumn ? 'zh-CN' : detectLanguageCodeFromColumn(column);
+          const label = code ? getLanguageLabel(code) : ('未识别：' + column);
+          const className = code ? 'language-pill' : 'language-pill muted';
+          return '<span class="' + className + '" title="' + escapeHtml(column) + '">'
+            + escapeHtml(label)
+            + '</span>';
+        }).join('');
+      }
+
+      function getLanguageLabel(code) {
+        const labels = {
+          'zh-CN': '中文',
+          ar: '阿拉伯语',
+          en: '英语',
+          pt: '葡萄牙语',
+          es: '西班牙语',
+          my: '缅甸语',
+          ja: '日语',
+          ko: '韩语',
+          fr: '法语',
+          de: '德语',
+          it: '意大利语',
+          ru: '俄语',
+          tr: '土耳其语',
+          th: '泰语',
+          vi: '越南语',
+          id: '印尼语',
+          ms: '马来语',
+          hi: '印地语',
+          bn: '孟加拉语',
+          ur: '乌尔都语',
+          fa: '波斯语',
+          he: '希伯来语',
+          nl: '荷兰语',
+          pl: '波兰语',
+          uk: '乌克兰语',
+          ro: '罗马尼亚语',
+          cs: '捷克语',
+          el: '希腊语',
+          sv: '瑞典语',
+          da: '丹麦语',
+          fi: '芬兰语',
+          no: '挪威语',
+          hu: '匈牙利语',
+          bg: '保加利亚语',
+          hr: '克罗地亚语',
+          sk: '斯洛伐克语',
+          sl: '斯洛文尼亚语',
+          lt: '立陶宛语',
+          lv: '拉脱维亚语',
+          et: '爱沙尼亚语',
+          sw: '斯瓦希里语',
+          tl: '菲律宾语'
+        };
+        return labels[code] || code;
       }
 
       function clearTranslationTable() {
         translationRows = [];
         translationColumns = [];
         sourceColumn = '';
-        tableTarget.innerHTML = '<option value="">未导入翻译表</option>';
-        tableTarget.disabled = true;
         tableFile.value = '';
         tableUrl.value = '';
         updateTableSummary();
@@ -717,6 +949,12 @@
         status.textContent = '正在镜像...';
         const selectedProvider = translate.checked ? provider.value : 'none';
         const translationSettings = collectTranslationSettings();
+        if (translate.checked && translationSettings.tableTargetMissing) {
+          isConverting = false;
+          updateRunState();
+          status.textContent = '翻译表里未识别到当前目标语言，已停止翻译。请更换目标语言或上传包含该语言的表。';
+          return;
+        }
         parent.postMessage({
           pluginMessage: {
             type: 'convert',
@@ -730,6 +968,9 @@
               apiKey: '',
               region: '',
               email: selectedProvider === 'mymemory' ? translationSettings.email : '',
+              targetLanguage: translationSettings.targetLanguage,
+              tableImported: translate.checked && translationSettings.tableImported,
+              tableTargetMissing: translate.checked && translationSettings.tableTargetMissing,
               useTranslationTable: translate.checked && translationSettings.useTranslationTable,
               translationTable: translate.checked ? translationSettings.translationTable : {},
               fallbackMissingWithMyMemory: translate.checked && translationSettings.fallbackMissingWithMyMemory
@@ -744,6 +985,12 @@
         status.textContent = '正在翻译...';
         const selectedProvider = provider.value === 'none' ? 'mymemory' : provider.value;
         const translationSettings = collectTranslationSettings();
+        if (translationSettings.tableTargetMissing) {
+          isConverting = false;
+          updateRunState();
+          status.textContent = '翻译表里未识别到当前目标语言，已停止翻译。请更换目标语言或上传包含该语言的表。';
+          return;
+        }
         parent.postMessage({
           pluginMessage: {
             type: 'convert',
@@ -757,6 +1004,9 @@
               apiKey: '',
               region: '',
               email: selectedProvider === 'mymemory' ? email.value : '',
+              targetLanguage: getTargetLanguageCode(),
+              tableImported: translationSettings.tableImported,
+              tableTargetMissing: translationSettings.tableTargetMissing,
               useTranslationTable: translationSettings.useTranslationTable,
               translationTable: translationSettings.translationTable,
               fallbackMissingWithMyMemory: translationSettings.fallbackMissingWithMyMemory
