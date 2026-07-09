@@ -267,12 +267,34 @@ async function translateTexts(node, settings) {
   if (settings.translate) {
     translations = await buildTranslationMap(loadedTextNodes, settings);
   }
+  if (settings.mirror !== false && settings.translate) {
+    addMirrorTextRunTransforms(loadedTextNodes, translations);
+  }
 
   for (const textNode of loadedTextNodes) {
     applyTextUpdate(textNode, translations, settings);
   }
 
   return stats;
+}
+
+function addMirrorTextRunTransforms(textNodes, translations) {
+  for (const node of textNodes) {
+    const text = String(node.characters || '');
+    if (!text || translations[text]) continue;
+    const mirrored = mirrorTextRuns(text);
+    if (mirrored !== text) {
+      translations[text] = mirrored;
+    }
+  }
+}
+
+function mirrorTextRuns(text) {
+  const runs = String(text || '').match(/[\u3400-\u9fff]+|[A-Za-z0-9]+|\s+|[^\u3400-\u9fffA-Za-z0-9\s]+/g);
+  if (!runs || runs.length < 2) return text;
+  if (!runs.some(containsChinese)) return text;
+  if (!runs.some(function (run) { return /[A-Za-z0-9]/.test(run); })) return text;
+  return runs.reverse().join('');
 }
 
 function mergeConversionStats(total, next) {
@@ -320,7 +342,15 @@ async function buildTranslationMap(textNodes, settings) {
   const hasTable = !!settings.useTranslationTable && Object.keys(table).length > 0;
   for (const node of textNodes) {
     const text = String(node.characters || '');
-    if (!normalizeTextForTranslation(text) || seen[text]) continue;
+    if (!normalizeTextForTranslation(text)) continue;
+
+    const styledSegmentTranslation = await buildStyledSegmentTranslation(node, settings, table, hasTable);
+    if (styledSegmentTranslation) {
+      translations[node.id] = styledSegmentTranslation;
+      continue;
+    }
+
+    if (seen[text]) continue;
     seen[text] = true;
 
     const localText = transformLocalText(text);
@@ -329,10 +359,18 @@ async function buildTranslationMap(textNodes, settings) {
       continue;
     }
 
-    const tableText = getTableTranslation(table, text);
-    if (tableText) {
-      translations[text] = tableText;
-      continue;
+    if (hasTable) {
+      const tableText = getTableTranslation(table, text);
+      if (tableText) {
+        translations[text] = buildExactTableTranslation(text, tableText, settings.mirror !== false);
+        continue;
+      }
+
+      const tableRunTranslation = translateTextRunsFromTable(text, table, settings.mirror !== false);
+      if (tableRunTranslation) {
+        translations[text] = tableRunTranslation;
+        continue;
+      }
     }
 
     if (!containsChinese(text)) continue;
@@ -347,18 +385,18 @@ async function buildTranslationMap(textNodes, settings) {
     for (const text of uniqueTexts) {
       remoteTranslations[text] = await translateWithMyMemory(text, settings);
     }
-    return mergeTranslations(translations, remoteTranslations);
+    return mergeStyledTranslations(translations, remoteTranslations);
   }
 
   if (normalizeProvider(settings.provider) === 'custom') {
     const remoteTranslations = await translateTextBatch(uniqueTexts, settings);
-    return mergeTranslations(translations, remoteTranslations);
+    return mergeStyledTranslations(translations, remoteTranslations);
   }
 
   for (const text of uniqueTexts) {
     translations[text] = await translateText(text, settings);
   }
-  return translations;
+  return styleTranslationValues(translations, uniqueTexts);
 }
 
 function getTableTranslation(table, text) {
@@ -368,11 +406,225 @@ function getTableTranslation(table, text) {
   return table[trimmed] || '';
 }
 
-function mergeTranslations(base, extra) {
+async function buildStyledSegmentTranslation(node, settings, table, hasTable) {
+  const text = String(node.characters || '');
+  const segments = captureFillSegments(node).filter(function (segment) {
+    return segment.text;
+  });
+  if (segments.length < 2 || !segments.some(function (segment) { return containsChinese(segment.text); })) {
+    return null;
+  }
+
+  let translatedAny = false;
+  const parts = [];
+  for (const segment of segments) {
+    const translatedText = await translateStyledSegmentText(segment.text, settings, table, hasTable);
+    if (translatedText !== segment.text) translatedAny = true;
+    parts.push({
+      text: translatedText,
+      sourceStart: segment.start,
+      sourceEnd: segment.end
+    });
+  }
+  if (!translatedAny && settings.mirror === false) return null;
+
+  const outputParts = shouldMirrorPartOrder(parts, settings.mirror !== false)
+    ? parts.slice().reverse()
+    : parts;
+  return buildTranslationFromSourceParts(outputParts);
+}
+
+async function translateStyledSegmentText(text, settings, table, hasTable) {
+  const localText = transformLocalText(text);
+  if (localText !== text) return localText;
+  if (!containsChinese(text)) return text;
+
+  if (hasTable) {
+    const tableText = getTableTranslation(table, text);
+    if (tableText) return tableText;
+
+    const tableRunTranslation = translateTextRunsFromTable(text, table, false);
+    if (tableRunTranslation) return tableRunTranslation.text;
+
+    if (!settings.fallbackMissingWithMyMemory) return text;
+  }
+
+  return await translateText(text, settings);
+}
+
+function buildTranslationFromSourceParts(parts) {
+  let cursor = 0;
+  const stylePlan = parts.map(function (part) {
+    const start = cursor;
+    cursor += part.text.length;
+    return {
+      start: start,
+      end: cursor,
+      sourceStart: part.sourceStart,
+      sourceEnd: part.sourceEnd
+    };
+  });
+  return {
+    text: parts.map(function (part) { return part.text; }).join(''),
+    stylePlan: stylePlan
+  };
+}
+
+function translateTextRunsFromTable(text, table, mirror) {
+  if (!table || !text) return null;
+  const sourceRuns = getTextRuns(text);
+  if (!sourceRuns.length) return null;
+  let translatedAny = false;
+  const outputRuns = sourceRuns.map(function (run) {
+    const translated = containsChinese(run.text)
+      ? getTableTranslation(table, run.text)
+      : '';
+    if (translated) translatedAny = true;
+    return {
+      sourceStart: run.start,
+      sourceEnd: run.end,
+      text: translated || run.text
+    };
+  });
+  if (!translatedAny) return null;
+  if (mirror) outputRuns.reverse();
+  const textOut = outputRuns.map(function (run) { return run.text; }).join('');
+  if (textOut === text) return null;
+
+  let cursor = 0;
+  const stylePlan = outputRuns.map(function (run) {
+    const start = cursor;
+    cursor += run.text.length;
+    return {
+      start: start,
+      end: cursor,
+      sourceStart: run.sourceStart,
+      sourceEnd: run.sourceEnd
+    };
+  });
+
+  return {
+    text: textOut,
+    stylePlan: stylePlan
+  };
+}
+
+function buildExactTableTranslation(sourceText, translatedText, mirror) {
+  const targetRuns = getTextRuns(translatedText).map(function (run) {
+    return {
+      text: run.text
+    };
+  });
+  if (shouldMirrorPartOrder(targetRuns, mirror)) targetRuns.reverse();
+
+  const outputText = targetRuns.length
+    ? targetRuns.map(function (run) { return run.text; }).join('')
+    : String(translatedText || '');
+  const stylePlan = buildStylePlanByRunAffinity(sourceText, targetRuns, outputText);
+  return {
+    text: outputText,
+    stylePlan: stylePlan
+  };
+}
+
+function shouldMirrorPartOrder(parts, mirror) {
+  if (!mirror) return false;
+  if (partsContainRtlText(parts) && partsContainAlphaNumericText(parts)) return false;
+  return true;
+}
+
+function partsContainRtlText(parts) {
+  return parts.some(function (part) {
+    return containsRtlText(part.text);
+  });
+}
+
+function partsContainAlphaNumericText(parts) {
+  return parts.some(function (part) {
+    return /[A-Za-z0-9]/.test(part.text || '');
+  });
+}
+
+function containsRtlText(value) {
+  return /[\u0590-\u05ff\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]/.test(value || '');
+}
+
+function buildStylePlanByRunAffinity(sourceText, targetRuns, outputText) {
+  const sourceRuns = getTextRuns(sourceText);
+  if (!sourceRuns.length || !targetRuns.length) return [];
+
+  const used = new Array(sourceRuns.length).fill(false);
+  let cursor = 0;
+  return targetRuns.map(function (run) {
+    const start = cursor;
+    cursor += run.text.length;
+    const sourceIndex = findSourceRunForTarget(run.text, sourceRuns, used);
+    if (sourceIndex >= 0) used[sourceIndex] = true;
+    const sourceRun = sourceIndex >= 0 ? sourceRuns[sourceIndex] : sourceRuns[0];
+    return {
+      start: start,
+      end: cursor,
+      sourceStart: sourceRun.start,
+      sourceEnd: sourceRun.end
+    };
+  }).filter(function (item) {
+    return item.start < item.end && item.end <= outputText.length;
+  });
+}
+
+function findSourceRunForTarget(targetText, sourceRuns, used) {
+  const exact = findUnusedSourceRun(sourceRuns, used, function (run) {
+    return run.text === targetText;
+  });
+  if (exact >= 0) return exact;
+
+  const targetType = getRunType(targetText);
+  if (targetType === 'translated') {
+    const chinese = findUnusedSourceRun(sourceRuns, used, function (run) {
+      return containsChinese(run.text);
+    });
+    if (chinese >= 0) return chinese;
+  }
+
+  const sameType = findUnusedSourceRun(sourceRuns, used, function (run) {
+    return getRunType(run.text) === targetType;
+  });
+  if (sameType >= 0) return sameType;
+
+  return findUnusedSourceRun(sourceRuns, used, function () {
+    return true;
+  });
+}
+
+function findUnusedSourceRun(sourceRuns, used, predicate) {
+  for (let i = 0; i < sourceRuns.length; i += 1) {
+    if (!used[i] && predicate(sourceRuns[i])) return i;
+  }
+  return -1;
+}
+
+function getRunType(text) {
+  if (containsChinese(text)) return 'chinese';
+  if (/[A-Za-z0-9]/.test(text)) return 'alnum';
+  if (/^\s+$/.test(text)) return 'space';
+  if (/^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~，。！？、；：“”‘’（）【】《》…·]+$/.test(text)) return 'punct';
+  return 'translated';
+}
+
+function mergeStyledTranslations(base, extra) {
   for (const key in extra) {
-    base[key] = extra[key];
+    base[key] = buildExactTableTranslation(key, extra[key], false);
   }
   return base;
+}
+
+function styleTranslationValues(translations, keys) {
+  for (const key of keys) {
+    if (translations[key]) {
+      translations[key] = buildExactTableTranslation(key, translations[key], false);
+    }
+  }
+  return translations;
 }
 
 function normalizeTextForTranslation(value) {
@@ -380,7 +632,14 @@ function normalizeTextForTranslation(value) {
 }
 
 function transformLocalText(value) {
-  return transformChineseDateTime(value);
+  return applyPreTranslationTextRules(value);
+}
+
+function applyPreTranslationTextRules(value) {
+  let text = String(value || '');
+  text = transformChineseDateTime(text);
+  text = transformSignedDecimalMarks(text);
+  return text;
 }
 
 function transformChineseDateTime(value) {
@@ -402,6 +661,12 @@ function transformChineseDateTime(value) {
   );
 }
 
+function transformSignedDecimalMarks(value) {
+  return String(value || '').replace(/(^|[^\d.])([+-])(\d+\.\d+%?)/g, function (_match, prefix, sign, number) {
+    return prefix + number + sign;
+  });
+}
+
 function pad2(value) {
   const text = String(value);
   return text.length === 1 ? '0' + text : text;
@@ -409,12 +674,229 @@ function pad2(value) {
 
 function applyTextUpdate(node, translations, settings) {
   const text = String(node.characters || '');
-  if (text && translations[text]) {
-    node.characters = translations[text];
+  const value = translations[node.id] || translations[text];
+  if (text && value) {
+    const translation = normalizeTranslationValue(value);
+    setCharactersPreservingFillStyles(node, translation.text, translation.stylePlan);
   }
 
   if (settings.mirror !== false && node.textAlignHorizontal === 'LEFT') {
     trySet(node, 'textAlignHorizontal', 'RIGHT');
+  }
+}
+
+function normalizeTranslationValue(value) {
+  if (value && typeof value === 'object') {
+    return {
+      text: String(value.text || ''),
+      stylePlan: Array.isArray(value.stylePlan) ? value.stylePlan : []
+    };
+  }
+  return {
+    text: String(value || ''),
+    stylePlan: []
+  };
+}
+
+function setCharactersPreservingFillStyles(node, nextText, stylePlan) {
+  const previousText = String(node.characters || '');
+  const segments = captureFillSegments(node);
+  const plannedSegments = stylePlan && stylePlan.length
+    ? materializeStylePlan(stylePlan, segments)
+    : planMovedFillSegments(previousText, String(nextText || ''), segments);
+  node.characters = nextText;
+  restoreFillSegments(node, previousText, String(nextText || ''), segments, plannedSegments);
+}
+
+function captureFillSegments(node) {
+  try {
+    if (typeof node.getStyledTextSegments === 'function') {
+      return node.getStyledTextSegments(['fills']).map(function (segment) {
+        return {
+          start: segment.start,
+          end: segment.end,
+          text: segment.characters || '',
+          fills: cloneValue(segment.fills)
+        };
+      }).filter(function (segment) {
+        return segment.fills && segment.fills !== figma.mixed;
+      });
+    }
+  } catch (error) {
+    // Older Figma runtimes can fail here; fallback below keeps conversion running.
+  }
+
+  const fills = safeGet(node, 'fills');
+  if (!fills || fills === figma.mixed) return [];
+  return [{
+    start: 0,
+    end: String(node.characters || '').length,
+    text: String(node.characters || ''),
+    fills: cloneValue(fills)
+  }];
+}
+
+function restoreFillSegments(node, previousText, nextText, segments, plannedSegments) {
+  if (!segments.length || !nextText) return;
+
+  const used = new Array(nextText.length).fill(false);
+  const matchedSegments = [];
+  if (plannedSegments && plannedSegments.length) {
+    for (const planned of plannedSegments) {
+      setRangeFillsSafe(node, planned.start, planned.end, planned.fills);
+      markRangeUsed(used, planned.start, planned.end);
+      matchedSegments.push({
+        start: planned.start,
+        end: planned.end,
+        segment: planned
+      });
+    }
+  }
+
+  const unmatchedSegments = [];
+  for (const segment of segments) {
+    if (!segment.text || !segment.fills) continue;
+    const range = findUnusedTextRange(nextText, segment.text, used);
+    if (!range) {
+      unmatchedSegments.push(segment);
+      continue;
+    }
+    setRangeFillsSafe(node, range.start, range.end, segment.fills);
+    markRangeUsed(used, range.start, range.end);
+    matchedSegments.push({
+      start: range.start,
+      end: range.end,
+      segment: segment
+    });
+  }
+
+  const fallbackSegments = unmatchedSegments.length ? unmatchedSegments : segments;
+  const unusedRanges = getUnusedRanges(used);
+  for (let i = 0; i < unusedRanges.length; i += 1) {
+    const range = unusedRanges[i];
+    const sourceSegment = pickStyleSegmentForRange(range, matchedSegments, fallbackSegments);
+    if (sourceSegment && sourceSegment.fills) {
+      setRangeFillsSafe(node, range.start, range.end, sourceSegment.fills);
+    }
+  }
+}
+
+function planMovedFillSegments(previousText, nextText, segments) {
+  const previousRuns = getTextRuns(previousText);
+  const nextRuns = getTextRuns(nextText);
+  if (previousRuns.length < 2 || previousRuns.length !== nextRuns.length) return [];
+
+  const reversedPreviousRuns = previousRuns.slice().reverse();
+  for (let i = 0; i < nextRuns.length; i += 1) {
+    if (nextRuns[i].text !== reversedPreviousRuns[i].text) return [];
+  }
+
+  const planned = [];
+  for (let i = 0; i < nextRuns.length; i += 1) {
+    const sourceRun = reversedPreviousRuns[i];
+    const segment = findSegmentCoveringRange(segments, sourceRun.start, sourceRun.end);
+    if (!segment || !segment.fills) continue;
+    planned.push({
+      start: nextRuns[i].start,
+      end: nextRuns[i].end,
+      text: nextRuns[i].text,
+      fills: segment.fills
+    });
+  }
+  return planned;
+}
+
+function materializeStylePlan(stylePlan, segments) {
+  const planned = [];
+  for (const item of stylePlan) {
+    const segment = findSegmentCoveringRange(segments, item.sourceStart, item.sourceEnd);
+    if (!segment || !segment.fills || item.start >= item.end) continue;
+    planned.push({
+      start: item.start,
+      end: item.end,
+      text: '',
+      fills: segment.fills
+    });
+  }
+  return planned;
+}
+
+function getTextRuns(text) {
+  const result = [];
+  const regex = /[\u3400-\u9fff]+|[A-Za-z0-9]+|\s+|[^\u3400-\u9fffA-Za-z0-9\s]+/g;
+  let match;
+  while ((match = regex.exec(String(text || '')))) {
+    result.push({
+      text: match[0],
+      start: match.index,
+      end: match.index + match[0].length
+    });
+  }
+  return result;
+}
+
+function findSegmentCoveringRange(segments, start, end) {
+  return segments.find(function (segment) {
+    return segment.start <= start && segment.end >= end;
+  }) || null;
+}
+
+function pickStyleSegmentForRange(range, matchedSegments, fallbackSegments) {
+  for (const matched of matchedSegments) {
+    if (matched.start >= range.end) return matched.segment;
+  }
+  return fallbackSegments[0] || null;
+}
+
+function findUnusedTextRange(text, needle, used) {
+  let start = text.indexOf(needle);
+  while (start >= 0) {
+    const end = start + needle.length;
+    let available = true;
+    for (let i = start; i < end; i += 1) {
+      if (used[i]) {
+        available = false;
+        break;
+      }
+    }
+    if (available) return { start: start, end: end };
+    start = text.indexOf(needle, start + 1);
+  }
+  return null;
+}
+
+function markRangeUsed(used, start, end) {
+  for (let i = start; i < end; i += 1) used[i] = true;
+}
+
+function getUnusedRanges(used) {
+  const ranges = [];
+  let start = -1;
+  for (let i = 0; i <= used.length; i += 1) {
+    if (i < used.length && !used[i]) {
+      if (start < 0) start = i;
+    } else if (start >= 0) {
+      ranges.push({ start: start, end: i });
+      start = -1;
+    }
+  }
+  return ranges;
+}
+
+function setRangeFillsSafe(node, start, end, fills) {
+  if (start >= end || !fills || fills === figma.mixed) return;
+  try {
+    node.setRangeFills(start, end, cloneValue(fills));
+  } catch (error) {
+    // Preserve text content even if a specific range style cannot be restored.
+  }
+}
+
+function cloneValue(value) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    return value;
   }
 }
 
@@ -633,7 +1115,7 @@ function mirrorContainer(node, isRoot) {
     node = replaceGroupWithFrame(node);
   }
 
-  const vectorArtwork = isVectorArtworkContainer(node);
+  const vectorArtwork = !isRoot && isVectorArtworkContainer(node);
 
   let children = node.children.slice();
   if (!vectorArtwork) {
@@ -702,6 +1184,11 @@ function safeRemove(node) {
 
 function isVectorArtworkContainer(node) {
   if (!('children' in node) || !node.children.length) return false;
+  const width = safeGet(node, 'width');
+  const height = safeGet(node, 'height');
+  if (typeof width === 'number' && typeof height === 'number' && Math.max(width, height) > 240) {
+    return false;
+  }
   const result = scanVectorArtwork(node);
   return result.hasVector && !result.hasNonVector;
 }
